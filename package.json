@@ -1,0 +1,42 @@
+{
+  "name": "new-bastyon-chat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vee-validate/zod": "^4.13.2",
+    "axios": "^0.21.4",
+    "bn.js": "^5.2.0",
+    "buffer": "^6.0.3",
+    "class-variance-authority": "^0.7.0",
+    "create-hash": "^1.2.0",
+    "file-saver": "^2.0.5",
+    "matrix-js-sdk-bastyon": "23.2.2",
+    "miscreant": "^0.3.2",
+    "pbkdf2": "^3.1.2",
+    "pinia": "^2.2.0",
+    "qs": "^6.10.3",
+    "stream-browserify": "^3.0.0",
+    "vee-validate": "^4.13.2",
+    "vue": "^3.4.31",
+    "vue-router": "4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.12",
+    "@vitejs/plugin-vue": "^5.0.5",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.40",
+    "tailwindcss": "^3.4.7",
+    "typescript": "^5.5.4",
+    "unplugin-auto-import": "^0.18.2",
+    "unplugin-vue-components": "^0.27.3",
+    "vite": "^5.3.4",
+    "vue-tsc": "^2.0.26"
+  }
+}

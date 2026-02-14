@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --app-margin-top-default: 0px;
+  --app-margin-top: max(env(safe-area-inset-top), var(--app-margin-top-default));
+  --app-margin-bottom-default: 0px;
+  --keyboardheight: 0px;
+  --app-margin-bottom: max(env(safe-area-inset-bottom), var(--app-margin-bottom-default));
+}
+
+:root {
+  --safe-area-inset-top: 0px;
+  --safe-area-inset-right: 0px;
+  --safe-area-inset-bottom: 0px;
+  --safe-area-inset-left: 0px;
+}
+
+@supports (padding-top: env(safe-area-inset-top)) {
+  :root {
+    --safe-area-inset-top: env(safe-area-inset-top, 0);
+    --safe-area-inset-right: env(safe-area-inset-right, 0);
+    --safe-area-inset-bottom: env(safe-area-inset-bottom, 0);
+    --safe-area-inset-left: env(safe-area-inset-left, 0);
+  }
+}
+
+/* Light theme (default) */
+:root {
+  --background-hidden-layer: 255, 255, 255;
+  --background-total-theme: 255, 255, 255;
+  --background-secondary-theme: 250, 250, 250;
+  --background-main: 240, 242, 245;
+  --background-main-contrast: 10, 12, 23;
+
+  --neutral-grad-0: 235, 235, 240;
+  --neutral-grad-1: 227, 228, 235;
+  --neutral-grad-2: 142, 144, 166;
+  --neutral-grad-3: 85, 87, 112;
+  --neutral-grad-4: 64, 65, 82;
+
+  --text-color: 10, 12, 23;
+  --text-on-main-bg-color: 85, 87, 112;
+  --text-on-bg-ac-color: 255, 255, 255;
+
+  --voice-message-fillStyle: 81, 129, 184;
+
+  --color-bg-ac-bright: 0, 163, 247;
+  --color-bg-ac: 0, 164, 255;
+  --color-bg-ac-1: 0, 142, 191;
+  --color-bg-ac-2: 250, 110, 132;
+  --color-bg-selection: 179, 212, 252;
+
+  --color-txt-ac: 0, 164, 255;
+  --color-txt-ac-1: 0, 142, 191;
+  --color-txt-ac-2: 250, 110, 132;
+  --color-txt-gray: 70, 71, 98;
+  --color-txt-gray-dark: 53, 53, 63;
+
+  --color-bg-orange: 255, 59, 0;
+  --color-txt-orange: 255, 72, 0;
+
+  --color-star-yellow: 255, 174, 0;
+
+  --color-shadow-base: 2, 18, 24;
+  --color-shadow-var: 32, 35, 42;
+  --text-on-bg-shadow-color: 255, 255, 255;
+
+  --color-bad: 244, 26, 77;
+  --color-nrml: 0, 0, 0;
+  --color-good: 7, 108, 52;
+  --color-yellow: 255, 238, 0;
+
+  /* Chat-specific */
+  --chat-bubble-own: 0, 164, 255;
+  --chat-bubble-other: 235, 235, 240;
+  --chat-sidebar: 250, 250, 250;
+  --chat-input-bg: 240, 242, 245;
+}
+
+/* Dark theme */
+:root[theme="black"] {
+  --background-hidden-layer: 5, 7, 15;
+  --background-total-theme: 10, 14, 24;
+  --background-secondary-theme: 15, 25, 38;
+  --background-main: 8, 18, 30;
+  --background-main-contrast: 245, 247, 250;
+
+  --neutral-grad-0: 8, 8, 9;
+  --neutral-grad-1: 22, 22, 25;
+  --neutral-grad-2: 48, 48, 60;
+  --neutral-grad-3: 68, 70, 84;
+  --neutral-grad-4: 90, 92, 120;
+
+  --text-color: 190, 182, 184;
+  --text-on-main-bg-color: 95, 97, 125;
+  --text-on-bg-ac-color: 255, 255, 255;
+
+  --voice-message-fillStyle: 90, 140, 200;
+
+  --color-bg-ac-bright: 0, 100, 220;
+  --color-bg-ac: 0, 90, 210;
+  --color-bg-ac-1: 0, 152, 200;
+  --color-bg-ac-2: 255, 120, 145;
+  --color-bg-selection: 190, 225, 255;
+
+  --color-txt-ac: 0, 174, 255;
+  --color-txt-ac-1: 0, 152, 200;
+  --color-txt-ac-2: 255, 120, 145;
+  --color-txt-gray: 115, 118, 140;
+  --color-txt-gray-dark: 125, 128, 148;
+
+  --color-bg-orange: 255, 80, 0;
+  --color-txt-orange: 255, 80, 0;
+
+  --color-shadow-base: 6, 8, 28;
+  --color-shadow-var: 14, 16, 24;
+  --text-on-bg-shadow-color: 230, 235, 250;
+
+  --color-bad: 250, 30, 85;
+  --color-nrml: 0, 0, 0;
+  --color-good: 10, 115, 60;
+  --color-yellow: 255, 248, 10;
+
+  /* Chat-specific dark */
+  --chat-bubble-own: 0, 90, 210;
+  --chat-bubble-other: 22, 22, 25;
+  --chat-sidebar: 15, 25, 38;
+  --chat-input-bg: 8, 18, 30;
+}
+
+html {
+  font-size: 1em;
+  line-height: 1.4;
+  min-height: 100%;
+  position: relative;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  background: rgb(var(--background-total-theme));
+}
+
+body {
+  min-height: 100%;
+  height: 100%;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}
+
+::-moz-selection {
+  background: #b3d4fc;
+  text-shadow: none;
+}
+
+::selection {
+  background: #b3d4fc;
+  text-shadow: none;
+}
+
+.sr-only {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
