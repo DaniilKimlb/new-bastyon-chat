@@ -5,10 +5,82 @@ import { getmatrixid } from "@/shared/lib/matrix/functions";
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef } from "vue";
 
-import type { ChatRoom, Message } from "./types";
+import type { ChatRoom, FileInfo, Message } from "./types";
 import { MessageStatus, MessageType } from "./types";
 
 const NAMESPACE = "chat";
+
+/** Determine MessageType from MIME type string */
+function messageTypeFromMime(mime: string): MessageType {
+  if (!mime) return MessageType.file;
+  if (mime.startsWith("image/")) return MessageType.image;
+  if (mime.startsWith("video/")) return MessageType.video;
+  if (mime.startsWith("audio/")) return MessageType.audio;
+  return MessageType.file;
+}
+
+/** Parse file metadata from raw event content.
+ *  m.file events: body is JSON string with {name, type, size, url, secrets}
+ *                 matrix-client.ts already parses it into content.pbody
+ *  m.image events: info contains {w, h, secrets, url, ...} */
+function parseFileInfo(content: Record<string, unknown>, msgtype: string): FileInfo | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pbody = content.pbody as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const info = content.info as any;
+
+  if (msgtype === "m.file" && pbody) {
+    return {
+      name: pbody.name ?? "file",
+      type: (pbody.type ?? "").replace("encrypted/", ""),
+      size: pbody.size ?? 0,
+      url: pbody.url ?? "",
+      secrets: pbody.secrets ? {
+        block: pbody.secrets.block,
+        keys: pbody.secrets.keys,
+        v: pbody.secrets.v ?? pbody.secrets.version ?? 1,
+      } : undefined,
+    };
+  }
+
+  if (msgtype === "m.image" && info) {
+    return {
+      name: (content.body as string) ?? "image",
+      type: info.mimetype ?? "image/jpeg",
+      size: info.size ?? 0,
+      url: info.url ?? (content.url as string) ?? "",
+      w: info.w,
+      h: info.h,
+      secrets: info.secrets ? {
+        block: info.secrets.block,
+        keys: info.secrets.keys,
+        v: info.secrets.v ?? info.secrets.version ?? 1,
+      } : undefined,
+    };
+  }
+
+  // Try parsing body as JSON for m.file without pbody
+  if (msgtype === "m.file" && typeof content.body === "string") {
+    try {
+      const parsed = JSON.parse(content.body);
+      if (parsed.url) {
+        return {
+          name: parsed.name ?? "file",
+          type: (parsed.type ?? "").replace("encrypted/", ""),
+          size: parsed.size ?? 0,
+          url: parsed.url,
+          secrets: parsed.secrets ? {
+            block: parsed.secrets.block,
+            keys: parsed.secrets.keys,
+            v: parsed.secrets.v ?? parsed.secrets.version ?? 1,
+          } : undefined,
+        };
+      }
+    } catch { /* not JSON, ignore */ }
+  }
+
+  return undefined;
+}
 
 /** Extract raw event data from a MatrixEvent object */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -60,18 +132,30 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
     if (!lastMessage && raw.type === "m.room.message" && raw.content) {
       const content = raw.content as Record<string, unknown>;
       const msgtype = content.msgtype as string;
-      // Show "[encrypted]" preview for encrypted messages in sidebar
-      const body = msgtype === "m.encrypted"
-        ? "[encrypted]"
-        : (content?.body as string) ?? "";
+      let previewBody: string;
+      let previewType = MessageType.text;
+
+      if (msgtype === "m.encrypted") {
+        previewBody = "[encrypted]";
+      } else if (msgtype === "m.file") {
+        const fi = parseFileInfo(content, msgtype);
+        previewBody = fi ? fi.name : "[file]";
+        previewType = fi ? messageTypeFromMime(fi.type) : MessageType.file;
+      } else if (msgtype === "m.image") {
+        previewBody = "[photo]";
+        previewType = MessageType.image;
+      } else {
+        previewBody = (content?.body as string) ?? "";
+      }
+
       lastMessage = {
         id: raw.event_id as string,
         roomId,
         senderId: getmatrixid(raw.sender as string),
-        content: body,
+        content: previewBody,
         timestamp: (raw.origin_server_ts as number) ?? 0,
         status: MessageStatus.sent,
-        type: MessageType.text,
+        type: previewType,
       };
     }
     if (lastMessage && lastTs) break;
@@ -266,51 +350,66 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     const msgs: Message[] = [];
 
     for (const event of timelineEvents) {
-      const raw = getRawEvent(event);
-      if (!raw) continue;
+      try {
+        const raw = getRawEvent(event);
+        if (!raw) continue;
 
-      // Log event types for debugging
-      if (msgs.length === 0 && timelineEvents.indexOf(event) < 5) {
-        console.log("[chat-store] event type=%s sender=%s", raw.type, raw.sender);
-      }
-
-      if (!raw.content) continue;
-      if (raw.type !== "m.room.message") continue;
-
-      const content = raw.content as Record<string, unknown>;
-      let body = (content.body as string) ?? "";
-      let msgType = MessageType.text;
-
-      // Try to decrypt if encrypted (msgtype "m.encrypted" per bastyon-chat format)
-      if (content.msgtype === "m.encrypted") {
-        if (roomCrypto) {
-          try {
-            // decryptEvent expects the full raw event (accesses .content, .sender, .event_id)
-            const decrypted = await roomCrypto.decryptEvent(raw);
-            body = decrypted.body;
-          } catch (e) {
-            console.warn("[chat-store] decrypt failed for event %s:", raw.event_id, e);
-            body = "[decrypt error: " + String(e) + "]";
-          }
-        } else {
-          body = "[no room crypto]";
+        // Log event types for debugging
+        if (msgs.length === 0 && timelineEvents.indexOf(event) < 5) {
+          console.log("[chat-store] event type=%s sender=%s", raw.type, raw.sender);
         }
+
+        if (!raw.content) continue;
+        if (raw.type !== "m.room.message") continue;
+
+        const content = raw.content as Record<string, unknown>;
+        let body = (content.body as string) ?? "";
+        let msgType = MessageType.text;
+
+        // Try to decrypt if encrypted (msgtype "m.encrypted" per bastyon-chat format)
+        if (content.msgtype === "m.encrypted") {
+          if (roomCrypto) {
+            try {
+              const decrypted = await roomCrypto.decryptEvent(raw);
+              body = decrypted.body;
+            } catch (e) {
+              console.error("[chat-store] decrypt failed for event %s:", raw.event_id, e);
+              body = "[encrypted]";
+            }
+          } else {
+            body = "[no room crypto]";
+          }
+        }
+
+        // Determine message type and parse file info
+        const mtype = content.msgtype as string;
+        let fileInfo: FileInfo | undefined;
+
+        if (mtype === "m.image" || mtype === "m.file") {
+          fileInfo = parseFileInfo(content, mtype);
+          if (fileInfo) {
+            msgType = mtype === "m.image"
+              ? MessageType.image
+              : messageTypeFromMime(fileInfo.type);
+            body = fileInfo.name;
+          } else {
+            msgType = mtype === "m.image" ? MessageType.image : MessageType.file;
+          }
+        }
+
+        msgs.push({
+          id: raw.event_id as string,
+          roomId,
+          senderId: getmatrixid(raw.sender as string),
+          content: body,
+          timestamp: (raw.origin_server_ts as number) ?? 0,
+          status: MessageStatus.sent,
+          type: msgType,
+          fileInfo,
+        });
+      } catch (e) {
+        console.error("[chat-store] parseEvent error (skipping):", e);
       }
-
-      // Determine message type from decrypted content or original
-      const mtype = content.msgtype as string;
-      if (mtype === "m.image") msgType = MessageType.image;
-      else if (mtype === "m.file") msgType = MessageType.file;
-
-      msgs.push({
-        id: raw.event_id as string,
-        roomId,
-        senderId: getmatrixid(raw.sender as string),
-        content: body,
-        timestamp: (raw.origin_server_ts as number) ?? 0,
-        status: MessageStatus.sent,
-        type: msgType,
-      });
     }
 
     return msgs;
@@ -336,73 +435,95 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
   /** Load timeline events for a room and convert to Messages */
   const loadRoomMessages = async (roomId: string) => {
-    const matrixService = getMatrixClientService();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const matrixRoom = matrixService.getRoom(roomId) as any;
-    if (!matrixRoom) {
-      console.warn("[chat-store] loadRoomMessages: room not found:", roomId);
-      return;
-    }
-
-    // Paginate backwards to load message history
     try {
-      await matrixService.scrollback(roomId, 50);
+      const matrixService = getMatrixClientService();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const matrixRoom = matrixService.getRoom(roomId) as any;
+      if (!matrixRoom) {
+        console.warn("[chat-store] loadRoomMessages: room not found:", roomId);
+        return;
+      }
+
+      // Paginate backwards to load message history
+      try {
+        await matrixService.scrollback(roomId, 50);
+      } catch (e) {
+        console.warn("[chat-store] scrollback failed:", e);
+      }
+
+      const timelineEvents = getTimelineEvents(matrixRoom);
+      console.log("[chat-store] loadRoomMessages: %d events for room %s",
+        timelineEvents.length, roomId);
+
+      const msgs = await parseTimelineEvents(timelineEvents, roomId);
+      console.log("[chat-store] loadRoomMessages: %d messages parsed", msgs.length);
+      setMessages(roomId, msgs);
     } catch (e) {
-      console.warn("[chat-store] scrollback failed:", e);
+      console.error("[chat-store] loadRoomMessages fatal error for room %s:", roomId, e);
+      // Set empty messages so UI doesn't hang
+      setMessages(roomId, []);
     }
-
-    const timelineEvents = getTimelineEvents(matrixRoom);
-    console.log("[chat-store] loadRoomMessages: %d events for room %s",
-      timelineEvents.length, roomId);
-
-    const msgs = await parseTimelineEvents(timelineEvents, roomId);
-    console.log("[chat-store] loadRoomMessages: %d messages parsed", msgs.length);
-    setMessages(roomId, msgs);
   };
 
   /** Handle incoming timeline event from Matrix sync */
   const handleTimelineEvent = async (event: unknown, roomId: string) => {
-    const raw = getRawEvent(event);
-    if (!raw?.content || raw.type !== "m.room.message") return;
+    try {
+      const raw = getRawEvent(event);
+      if (!raw?.content || raw.type !== "m.room.message") return;
 
-    const content = raw.content as Record<string, unknown>;
-    let body = (content.body as string) ?? "";
-    let msgType = MessageType.text;
+      const content = raw.content as Record<string, unknown>;
+      let body = (content.body as string) ?? "";
+      let msgType = MessageType.text;
 
-    // Decrypt if encrypted
-    if (content.msgtype === "m.encrypted") {
-      const roomCrypto = await ensureRoomCrypto(roomId);
-      if (roomCrypto) {
-        try {
-          const decrypted = await roomCrypto.decryptEvent(raw);
-          body = decrypted.body;
-        } catch (e) {
-          console.warn("[chat-store] handleTimelineEvent decrypt failed:", e);
-          body = "[decrypt error: " + String(e) + "]";
+      // Decrypt if encrypted
+      if (content.msgtype === "m.encrypted") {
+        const roomCrypto = await ensureRoomCrypto(roomId);
+        if (roomCrypto) {
+          try {
+            const decrypted = await roomCrypto.decryptEvent(raw);
+            body = decrypted.body;
+          } catch (e) {
+            console.warn("[chat-store] handleTimelineEvent decrypt failed:", e);
+            body = "[decrypt error: " + String(e) + "]";
+          }
+        } else {
+          body = "[no room crypto]";
         }
-      } else {
-        body = "[no room crypto]";
       }
+
+      const mtype = content.msgtype as string;
+      let fileInfo: FileInfo | undefined;
+
+      if (mtype === "m.image" || mtype === "m.file") {
+        fileInfo = parseFileInfo(content, mtype);
+        if (fileInfo) {
+          msgType = mtype === "m.image"
+            ? MessageType.image
+            : messageTypeFromMime(fileInfo.type);
+          body = fileInfo.name;
+        } else {
+          msgType = mtype === "m.image" ? MessageType.image : MessageType.file;
+        }
+      }
+
+      const message: Message = {
+        id: raw.event_id as string,
+        roomId,
+        senderId: getmatrixid(raw.sender as string),
+        content: body,
+        timestamp: (raw.origin_server_ts as number) ?? Date.now(),
+        status: MessageStatus.sent,
+        type: msgType,
+        fileInfo,
+      };
+
+      addMessage(roomId, message);
+
+      // Also refresh rooms list to update sidebar
+      refreshRooms();
+    } catch (e) {
+      console.error("[chat-store] handleTimelineEvent error:", e);
     }
-
-    const mtype = content.msgtype as string;
-    if (mtype === "m.image") msgType = MessageType.image;
-    else if (mtype === "m.file") msgType = MessageType.file;
-
-    const message: Message = {
-      id: raw.event_id as string,
-      roomId,
-      senderId: getmatrixid(raw.sender as string),
-      content: body,
-      timestamp: (raw.origin_server_ts as number) ?? Date.now(),
-      status: MessageStatus.sent,
-      type: msgType,
-    };
-
-    addMessage(roomId, message);
-
-    // Also refresh rooms list to update sidebar
-    refreshRooms();
   };
 
   return {
