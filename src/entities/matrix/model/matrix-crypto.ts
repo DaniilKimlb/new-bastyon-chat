@@ -111,7 +111,8 @@ const decrypt = async function (keyData: any, { encrypted, nonce }: { encrypted:
   const _encrypted = new Uint8Array(_base64ToArrayBuffer(encrypted));
   const _nonce = new Uint8Array(_base64ToArrayBuffer(nonce));
 
-  const k = await key.open(_encrypted, _nonce);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const k = await key.open(_encrypted, _nonce as any);
 
   const decrypted = new TextDecoder().decode(k);
 
@@ -127,7 +128,8 @@ const encrypt = async function (text: string, keyData: any): Promise<{ encrypted
 
   window.crypto.getRandomValues(nonce);
 
-  const ciphertext = await key.seal(plaintext, nonce);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ciphertext = await key.seal(plaintext, nonce as any);
 
   const encrypted = {
     encrypted: _arrayBufferToBase64(ciphertext.buffer),
@@ -142,6 +144,7 @@ const encrypt = async function (text: string, keyData: any): Promise<{ encrypted
 interface CryptoUserInfo {
   id: string;
   keys: string[];
+  source?: { id?: number | string; [key: string]: unknown };
 }
 
 // ---- PcryptoRoom interface ----
@@ -149,6 +152,10 @@ interface CryptoUserInfo {
 export interface PcryptoRoomInstance {
   canBeEncrypt(): boolean;
   prepare(): Promise<PcryptoRoomInstance>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _encrypt(userid: string, text: string, v?: number): Promise<{ encrypted: string; nonce: string }>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _decrypt(userid: string, encData: any, time: number, block: number, usersIds: string[] | null, v?: number): Promise<string>;
   encryptEvent(text: string): Promise<Record<string, unknown>>;
   decryptEvent(event: Record<string, unknown>): Promise<{ body: string; msgtype: string }>;
   decryptEventGroup(event: Record<string, unknown>): Promise<{ body: string; msgtype: string }>;
@@ -262,24 +269,28 @@ export class Pcrypto {
       return us.map(function (u) { return usersinfo[u.id]; }).filter(function (u) { return !!u; });
     }
 
-    // ---- preparedUsers — EXACT match of original lines 66-86 ----
+    // ---- preparedUsers — match of original lines 66-86 ----
     function preparedUsers(time: number, v?: number): CryptoUserInfo[] {
       const filtered = getusersinfobytime(time).filter(function (ui) {
         return ui.keys && ui.keys.length >= m;
       });
-      if (!v || v <= 1) {
-        return filtered;
+      if (v && v > 1) {
+        // Original: _.sortBy(r, u => u.source.id) — sort by Pocketnet numeric user ID
+        filtered.sort((a, b) => {
+          const aId = a.source?.id;
+          const bId = b.source?.id;
+          if (aId == null && bId == null) return 0;
+          if (aId == null) return -1;
+          if (bId == null) return 1;
+          if (aId < bId) return -1;
+          if (aId > bId) return 1;
+          return 0;
+        });
       }
-      // v >= 2: sort by user ID (matches original sortBy u.source.id where source.id = address)
-      return filtered.sort((a, b) => {
-        if (a.id < b.id) return -1;
-        if (a.id > b.id) return 1;
-        return 0;
-      });
+      return filtered;
     }
 
-    // ---- preparedUsersById — EXACT match of original lines 88-110 ----
-    // When usersIds is provided, use ONLY those specific users (not all room members)
+    // ---- preparedUsersById — match of original lines 88-110 ----
     function preparedUsersById(ids: string[], v?: number): CryptoUserInfo[] {
       const ui: CryptoUserInfo[] = [];
       for (const u of Object.values(users)) {
@@ -290,14 +301,20 @@ export class Pcrypto {
           }
         }
       }
-      if (!v || v <= 1) {
-        return ui;
+      if (v && v > 1) {
+        // Original: _.sortBy(ui, u => u.source.id) — sort by Pocketnet numeric user ID
+        ui.sort((a, b) => {
+          const aId = a.source?.id;
+          const bId = b.source?.id;
+          if (aId == null && bId == null) return 0;
+          if (aId == null) return -1;
+          if (bId == null) return 1;
+          if (aId < bId) return -1;
+          if (aId > bId) return 1;
+          return 0;
+        });
       }
-      return ui.sort((a, b) => {
-        if (a.id < b.id) return -1;
-        if (a.id > b.id) return 1;
-        return 0;
-      });
+      return ui;
     }
 
     // ---- getusershistory — EXACT match of original lines 175-278 ----
@@ -393,16 +410,15 @@ export class Pcrypto {
     // ---- eaa object — EXACT match of original lines 405-527 ----
     const eaa = {
       cuhash: function (users: CryptoUserInfo[], num: number, block: number): Buffer {
-        const input = users.map(function (u) { return u.keys[num]; }).join("") + (block || pcrypto.currentblock.height);
-        const hashHex = sha224(input).toString("hex");
-        const result = pbkdf2.pbkdf2Sync(
-          hashHex,
+        return pbkdf2.pbkdf2Sync(
+          sha224(
+            users.map(function (u) { return u.keys[num]; }).join("") + (block || pcrypto.currentblock.height)
+          ).toString("hex"),
           salt,
           1,
           32,
           "sha256"
         );
-        return result;
       },
 
       userspublics: function (time: number, block: number, usersIds: string[] | null, v: number) {
@@ -432,12 +448,10 @@ export class Pcrypto {
           return key.private;
         });
 
-        // toArrayLike(Buffer, 'be', 32) gives a zero-padded 32-byte big-endian Buffer
-        // (toBuffer() fails in Vite because bn.js can't find Buffer in its own scope)
-        const scalarBN = eaa.scalars(time, block, privates, usersIds, v);
-        const buf = Buffer.from(scalarBN.toArrayLike(Uint8Array, "be", 32));
-
-        return buf;
+        const sc = eaa.scalars(time, block, privates, usersIds, v);
+        // Original: Buffer.allocUnsafe(32) + sc.toBuffer().copy(buf, 32-len)
+        // Equivalent: toArrayLike with zero-padding
+        return Buffer.from(sc.toArrayLike(Uint8Array, "be", 32));
       },
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -497,11 +511,9 @@ export class Pcrypto {
 
         for (const [id, s] of Object.entries(us)) {
           if (id != pcrypto.user?.userinfo?.id) {
-            const shared = bitcoin.ecc.pointMultiply(s, c, undefined, true);
-            // pointMultiply may return Uint8Array, not Buffer — use Buffer.from for hex
-            const safeHex = Buffer.from(shared).toString("hex");
+            su[id] = bitcoin.ecc.pointMultiply(s, c, undefined, true);
             su[id] = pbkdf2.pbkdf2Sync(
-              safeHex,
+              su[id].toString("hex"),
               salt,
               64,
               32,
@@ -625,10 +637,8 @@ export class Pcrypto {
 
         // Group messages have a 'hash' field → use group decryption (AES-CBC)
         if (content.hash) {
-          console.log("[pcrypto] decryptEvent → GROUP path, hash=%s", content.hash);
           return room.decryptEventGroup(event);
         }
-        console.log("[pcrypto] decryptEvent → 1:1 path, keys: %s", Object.keys(content).join(","));
 
         const k = `${ecachekey}${pcrypto.user.userinfo.id}-${(content.edited as string) || (event.event_id as string)}`;
 
@@ -671,27 +681,6 @@ export class Pcrypto {
         const time = (event.origin_server_ts as number) || 1;
         const block = content.block as number;
         const eventVersion = content.version as number | undefined;
-        const bodyKeyCount = Object.keys(body).length;
-
-        // Check if prepared users (with valid keys) cover the body users
-        const preparedBefore = preparedUsers(0, eventVersion || version);
-        if (preparedBefore.length < bodyKeyCount) {
-          getusershistory();
-          await getusersinfo();
-
-          // If room state is still incomplete, populate users from body keys + sender
-          const preparedAfter = preparedUsers(0, eventVersion || version);
-          if (preparedAfter.length < bodyKeyCount && pcrypto.getUsersInfoCb) {
-            const bodyUserIds = Object.keys(body);
-            const allUserIds = [...new Set([...bodyUserIds, sender])];
-            for (const uid of allUserIds) {
-              if (!users[uid]) {
-                users[uid] = { id: uid, life: [{ start: 1 }] };
-              }
-            }
-            await getusersinfo();
-          }
-        }
 
         if (sender == me) {
           // Find the other user's key (like _.find on object)
@@ -744,45 +733,18 @@ export class Pcrypto {
         } catch { /* not cached */ }
 
         // Find the common key state event
-        console.log("[pcrypto] decryptEventGroup: sender=%s hash=%s", sender?.slice(0, 16), hash);
         const commonKeyEvt = getCommonKey(sender, hash);
         if (!commonKeyEvt) {
-          // Debug: list all encryption state events to understand what's available
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const chatAny = chat as any;
-          const allEncEvents = chatAny.currentState?.getStateEvents?.("m.room.encryption") ?? [];
-          console.error("[pcrypto] No common key found. Available state events (%d):", allEncEvents.length);
-          for (const e of (allEncEvents as any[]).slice(0, 10)) {
-            console.error("  state_key=%s hash=%s", e?.event?.state_key, e?.event?.content?.hash);
-          }
           throw new Error("No common key event found for hash=" + hash);
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ckContent = (commonKeyEvt as any).content;
-        console.log("[pcrypto] decryptEventGroup: commonKey event: block=%s version=%s keysLen=%d sender=%s",
-          ckContent?.block, ckContent?.version, (ckContent?.keys as string)?.length,
-          getmatrixid((commonKeyEvt as any).sender));
-
         // Decrypt the common key (AES-SIV per-user encrypted key)
         let commonKey: string;
-        try {
-          commonKey = await room.decryptKey(commonKeyEvt);
-        } catch (e) {
-          console.error("[pcrypto] decryptEventGroup: decryptKey FAILED:", e);
-          throw e;
-        }
-        console.log("[pcrypto] decryptEventGroup: common key decrypted OK, length=%d", commonKey?.length);
+        commonKey = await room.decryptKey(commonKeyEvt);
 
         // Decrypt message body (hex-encoded AES-CBC ciphertext)
         const bodyHex = content.body as string;
         const bodyBytes = Buffer.from(bodyHex, "hex");
-        let decryptedBuffer: ArrayBuffer;
-        try {
-          decryptedBuffer = await pcrypto.pcryptoFile.decrypt(bodyBytes.buffer, commonKey);
-        } catch (e) {
-          console.error("[pcrypto] decryptEventGroup: AES-CBC decrypt FAILED:", e);
-          throw e;
-        }
+        const decryptedBuffer = await pcrypto.pcryptoFile.decrypt(bodyBytes.buffer, commonKey);
 
         const dec = new TextDecoder();
         const data = {
@@ -971,7 +933,6 @@ export class Pcrypto {
         }
 
         if (!secrets || !block) {
-          console.error("[pcrypto] decryptKey: missing secrets=%s block=%s", !!secrets, block);
           throw new Error("Missing secrets or block");
         }
 
@@ -983,33 +944,6 @@ export class Pcrypto {
         // Build users list from body keys + sender (matches original lines 757-762)
         const bodyUsers = Object.keys(body);
         const usersList = [...new Set([...bodyUsers, sender])];
-
-        console.log("[pcrypto] decryptKey: type=%s sender=%s me=%s block=%d v=%s bodyKeys=%s time=%d",
-          eventType, sender?.slice(0, 16), me?.slice(0, 16), block, v,
-          bodyUsers.map(k => k.slice(0, 12)).join(","), time);
-
-        // Check if prepared users (with valid 12+ keys) cover the body users
-        const preparedBefore = preparedUsers(0, v || version);
-        if (preparedBefore.length < bodyUsers.length) {
-          // First try normal re-prepare from room state events
-          getusershistory();
-          await getusersinfo();
-
-          // If room state is still incomplete (e.g. member events not fully loaded),
-          // directly populate users dict from the body keys + sender
-          const preparedAfter = preparedUsers(0, v || version);
-          if (preparedAfter.length < bodyUsers.length && pcrypto.getUsersInfoCb) {
-            console.log("[pcrypto] decryptKey: room state incomplete (prepared=%d, body=%d), fetching users directly",
-              preparedAfter.length, bodyUsers.length);
-            // Add all body users + sender to the users dict with open-ended life
-            for (const uid of usersList) {
-              if (!users[uid]) {
-                users[uid] = { id: uid, life: [{ start: 1 }] };
-              }
-            }
-            await getusersinfo();
-          }
-        }
 
         let keyindex: string | undefined;
         let bodyindex: string | undefined;
@@ -1028,13 +962,8 @@ export class Pcrypto {
         }
 
         if (!bodyindex || !body[bodyindex]) {
-          console.error("[pcrypto] decryptKey: emptyforme — bodyindex=%s hasMeInBody=%s sender=%s",
-            bodyindex, !!body[me], sender?.slice(0, 16));
           throw new Error("emptyforme");
         }
-
-        console.log("[pcrypto] decryptKey: keyindex=%s bodyindex=%s → calling _decrypt",
-          keyindex?.slice(0, 16), bodyindex?.slice(0, 16));
 
         // Pass usersList to _decrypt (matches original which passes users array)
         return room._decrypt(keyindex!, body[bodyindex], time, block, usersList, v);

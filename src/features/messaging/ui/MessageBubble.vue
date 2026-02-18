@@ -1,53 +1,92 @@
 <script setup lang="ts">
 import type { Message } from "@/entities/chat";
-import { MessageStatus, MessageType } from "@/entities/chat";
+import { useChatStore, MessageStatus, MessageType } from "@/entities/chat";
 import { formatTime } from "@/shared/lib/format";
 import { useFileDownload } from "../model/use-file-download";
+import MessageContent from "./MessageContent.vue";
 import { ref, onMounted } from "vue";
+import { useLongPress, useSwipeGesture } from "@/shared/lib/gestures";
 
 interface Props {
   message: Message;
   isOwn: boolean;
   showAvatar: boolean;
+  isGroup?: boolean;
+  isFirstInGroup?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), { isGroup: false, isFirstInGroup: false });
+
+/** Tail (pointed corner) only on the last message in a group (= showAvatar) */
+const tailClass = computed(() => {
+  if (!props.showAvatar) return "";
+  return props.isOwn ? "rounded-br-sm" : "rounded-bl-sm";
+});
+const emit = defineEmits<{
+  reply: [message: Message];
+  contextmenu: [payload: { message: Message; x: number; y: number }];
+  openMedia: [message: Message];
+}>();
+
+const { onPointerdown, onPointermove, onPointerup, onPointerleave, onContextmenu: preventContextmenu } = useLongPress({
+  onTrigger: (e) => {
+    emit("contextmenu", { message: props.message, x: e.clientX, y: e.clientY });
+  },
+});
+
+const handleRightClick = (e: MouseEvent) => {
+  e.preventDefault();
+  emit("contextmenu", { message: props.message, x: e.clientX, y: e.clientY });
+};
+
+const { offsetX: swipeOffsetX, isSwiping, onTouchstart, onTouchmove, onTouchend } = useSwipeGesture({
+  direction: "right",
+  threshold: 60,
+  maxOffset: 100,
+  onTrigger: () => {
+    emit("reply", props.message);
+  },
+});
+
+const swipeStyle = computed(() => ({
+  transform: swipeOffsetX.value > 0 ? `translateX(${swipeOffsetX.value}px)` : undefined,
+  transition: isSwiping.value ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+}));
+
+const swipeArrowOpacity = computed(() => Math.min(swipeOffsetX.value / 60, 1));
+
+const chatStore = useChatStore();
+const isSelected = computed(() => chatStore.selectedMessageIds.has(props.message.id));
+
+const handleBubbleClick = () => {
+  if (chatStore.selectionMode) {
+    chatStore.toggleSelection(props.message.id);
+  }
+};
 const { getState, download, saveFile, formatSize } = useFileDownload();
 
 const time = computed(() => formatTime(new Date(props.message.timestamp)));
 
-const isMedia = computed(() =>
-  props.message.type === MessageType.image ||
-  props.message.type === MessageType.video ||
-  props.message.type === MessageType.audio
-);
-
 const isFile = computed(() => props.message.type === MessageType.file);
-
 const hasFileInfo = computed(() => !!props.message.fileInfo);
-
 const fileState = computed(() => getState(props.message.id));
 
-const lightboxOpen = ref(false);
+/** Telegram-style sender colors (same palette as Avatar) */
+const SENDER_COLORS = ["#E17076", "#FAA774", "#A695E7", "#7BC862", "#6EC9CB", "#65AADD", "#EE7AAE"];
+function hashStr(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return Math.abs(h); }
+const senderColor = computed(() => SENDER_COLORS[hashStr(props.message.senderId) % SENDER_COLORS.length]);
 
 const statusIcon = computed(() => {
   switch (props.message.status) {
-    case MessageStatus.sending:
-      return "\u{23F3}";
-    case MessageStatus.sent:
-      return "\u{2713}";
-    case MessageStatus.delivered:
-      return "\u{2713}\u{2713}";
-    case MessageStatus.read:
-      return "\u{2713}\u{2713}";
-    case MessageStatus.failed:
-      return "\u{2717}";
-    default:
-      return "";
+    case MessageStatus.sending: return "\u23F3";
+    case MessageStatus.sent: return "\u2713";
+    case MessageStatus.delivered: return "\u2713\u2713";
+    case MessageStatus.read: return "\u2713\u2713";
+    case MessageStatus.failed: return "\u2717";
+    default: return "";
   }
 });
 
-/** File extension icon based on type */
 const fileIcon = computed(() => {
   const type = props.message.fileInfo?.type ?? "";
   if (type.startsWith("application/pdf")) return "pdf";
@@ -59,7 +98,6 @@ const fileIcon = computed(() => {
   return "file";
 });
 
-/** Auto-load images on mount */
 onMounted(() => {
   if (props.message.type === MessageType.image && props.message.fileInfo) {
     download(props.message);
@@ -67,298 +105,272 @@ onMounted(() => {
 });
 
 const handleMediaClick = () => {
-  if (props.message.type === MessageType.image && fileState.value.objectUrl) {
-    lightboxOpen.value = true;
+  if ((props.message.type === MessageType.image || props.message.type === MessageType.video) && fileState.value.objectUrl) {
+    emit("openMedia", props.message);
   }
 };
 
 const handleFileDownload = async () => {
   if (!props.message.fileInfo) return;
-
   const url = fileState.value.objectUrl ?? await download(props.message);
-
-  if (url) {
-    saveFile(url, props.message.fileInfo.name);
-  }
+  if (url) saveFile(url, props.message.fileInfo.name);
 };
 
 const handleVideoAudioLoad = () => {
   if (!props.message.fileInfo) return;
   download(props.message);
 };
+
+const handleReply = () => {
+  chatStore.replyingTo = {
+    id: props.message.id,
+    senderId: props.message.senderId,
+    content: props.message.content,
+  };
+};
 </script>
 
 <template>
   <div
-    class="flex gap-2"
+    class="group relative flex gap-2"
     :class="props.isOwn ? 'flex-row-reverse' : 'flex-row'"
+    :style="swipeStyle"
+    @pointerdown="onPointerdown"
+    @pointermove="onPointermove"
+    @pointerup="onPointerup"
+    @pointerleave="onPointerleave"
+    @contextmenu="handleRightClick"
+    @touchstart="onTouchstart"
+    @touchmove="onTouchmove"
+    @touchend="onTouchend"
   >
-    <div v-if="!props.isOwn && props.showAvatar" class="shrink-0">
+    <!-- Swipe reply arrow (behind message) -->
+    <div
+      v-if="swipeOffsetX > 0"
+      class="absolute left-0 top-1/2 flex h-8 w-8 -translate-x-10 -translate-y-1/2 items-center justify-center rounded-full bg-color-bg-ac text-white"
+      :style="{ opacity: swipeArrowOpacity }"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="9 17 4 12 9 7" />
+        <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+      </svg>
+    </div>
+
+    <!-- Selection checkbox -->
+    <div v-if="chatStore.selectionMode" class="flex shrink-0 items-center" @click.stop="handleBubbleClick">
+      <div
+        class="flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors"
+        :class="isSelected ? 'border-color-bg-ac bg-color-bg-ac' : 'border-neutral-grad-2'"
+      >
+        <svg v-if="isSelected" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      </div>
+    </div>
+
+    <!-- Avatar slot -->
+    <div v-if="!chatStore.selectionMode && !props.isOwn && props.showAvatar" class="shrink-0 self-end">
       <slot name="avatar" />
     </div>
-    <div v-else-if="!props.isOwn" class="w-8 shrink-0" />
+    <div v-else-if="!chatStore.selectionMode && !props.isOwn" class="w-8 shrink-0" />
 
-    <!-- Image message -->
-    <div
-      v-if="message.type === MessageType.image && hasFileInfo"
-      class="max-w-[70%] overflow-hidden rounded-2xl"
-      :class="
-        props.isOwn
-          ? 'rounded-br-sm bg-chat-bubble-own'
-          : 'rounded-bl-sm bg-chat-bubble-other'
-      "
-    >
-      <!-- Image container -->
-      <div class="relative cursor-pointer" @click="handleMediaClick">
-        <!-- Loading state -->
-        <div
-          v-if="fileState.loading"
-          class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0"
-        >
-          <div class="h-8 w-8 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
+    <!-- Bubble container -->
+    <div class="relative min-w-0 max-w-[70%]">
+      <!-- Reply action (on hover) -->
+      <button
+        class="absolute -left-8 top-1/2 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-text-on-main-bg-color opacity-0 transition-opacity hover:bg-neutral-grad-0 group-hover:flex group-hover:opacity-100"
+        :class="props.isOwn ? '-left-8' : '-right-8'"
+        title="Reply"
+        @click="handleReply"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 17 4 12 9 7" />
+          <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+        </svg>
+      </button>
+
+      <!-- Image message -->
+      <div
+        v-if="message.type === MessageType.image && hasFileInfo"
+        class="overflow-hidden rounded-2xl"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other']"
+      >
+        <div class="relative cursor-pointer" @click="handleMediaClick">
+          <div v-if="fileState.loading" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0">
+            <div class="h-8 w-8 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
+          </div>
+          <div v-else-if="fileState.error" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0 text-xs text-color-bad">
+            Failed to load image
+          </div>
+          <img v-else-if="fileState.objectUrl" :src="fileState.objectUrl" :alt="message.fileInfo?.name" class="block max-h-[360px] max-w-full object-cover" loading="lazy" />
+          <div class="absolute bottom-1 right-2 flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5">
+            <span class="text-[10px] text-white/90">{{ time }}</span>
+            <span v-if="props.isOwn" class="text-[10px] text-white/90">{{ statusIcon }}</span>
+          </div>
         </div>
 
-        <!-- Error state -->
-        <div
-          v-else-if="fileState.error"
-          class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0 text-xs text-color-bad"
-        >
-          Failed to load image
-        </div>
-
-        <!-- Loaded image -->
-        <img
-          v-else-if="fileState.objectUrl"
-          :src="fileState.objectUrl"
-          :alt="message.fileInfo?.name"
-          class="block max-h-[360px] max-w-full object-cover"
-          loading="lazy"
-        />
-
-        <!-- Timestamp overlay on image -->
-        <div class="absolute bottom-1 right-2 flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5">
-          <span class="text-[10px] text-white/90">{{ time }}</span>
-          <span v-if="props.isOwn" class="text-[10px] text-white/90">{{ statusIcon }}</span>
-        </div>
-      </div>
-
-      <!-- Lightbox -->
-      <Teleport to="body">
-        <div
-          v-if="lightboxOpen && fileState.objectUrl"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-          @click.self="lightboxOpen = false"
-        >
-          <button
-            class="absolute right-4 top-4 text-white hover:text-white/80"
-            @click="lightboxOpen = false"
+        <!-- Reactions row -->
+        <div v-if="message.reactions && Object.keys(message.reactions).length" class="flex flex-wrap gap-1 px-2 py-1">
+          <span
+            v-for="(data, emoji) in message.reactions"
+            :key="emoji"
+            class="reaction-chip inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs"
+            :class="data.myEventId ? 'bg-color-bg-ac/20 text-color-bg-ac' : 'bg-neutral-grad-0 text-text-on-main-bg-color'"
           >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 6L6 18" /><path d="M6 6l12 12" />
-            </svg>
-          </button>
-          <img
-            :src="fileState.objectUrl"
-            :alt="message.fileInfo?.name"
-            class="max-h-[90vh] max-w-[90vw] object-contain"
-          />
+            {{ emoji }} {{ data.count > 1 ? data.count : '' }}
+          </span>
         </div>
-      </Teleport>
-    </div>
 
-    <!-- Video message -->
-    <div
-      v-else-if="message.type === MessageType.video && hasFileInfo"
-      class="max-w-[70%] overflow-hidden rounded-2xl"
-      :class="
-        props.isOwn
-          ? 'rounded-br-sm bg-chat-bubble-own'
-          : 'rounded-bl-sm bg-chat-bubble-other'
-      "
-    >
-      <div class="relative">
-        <video
-          v-if="fileState.objectUrl"
-          :src="fileState.objectUrl"
-          controls
-          class="block max-h-[360px] max-w-full"
-          preload="metadata"
-        />
-        <div
-          v-else-if="fileState.loading"
-          class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0"
-        >
-          <div class="h-8 w-8 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
-        </div>
-        <button
-          v-else
-          class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0 hover:bg-neutral-grad-2 transition-colors"
-          @click="handleVideoAudioLoad"
-        >
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" class="text-color-bg-ac">
-            <polygon points="5 3 19 12 5 21 5 3" />
-          </svg>
-        </button>
       </div>
-      <div class="flex items-center justify-between px-3 py-1.5">
-        <span class="truncate text-xs" :class="props.isOwn ? 'text-white/70' : 'text-text-on-main-bg-color'">
+
+      <!-- Video message -->
+      <div
+        v-else-if="message.type === MessageType.video && hasFileInfo"
+        class="overflow-hidden rounded-2xl"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other']"
+      >
+        <div class="relative">
+          <video v-if="fileState.objectUrl" :src="fileState.objectUrl" controls class="block max-h-[360px] max-w-full" preload="metadata" />
+          <div v-else-if="fileState.loading" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0">
+            <div class="h-8 w-8 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
+          </div>
+          <button v-else class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0 transition-colors hover:bg-neutral-grad-2" @click="handleVideoAudioLoad">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" class="text-color-bg-ac"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+          </button>
+        </div>
+        <div class="flex items-center justify-between px-3 py-1.5">
+          <span class="truncate text-xs" :class="props.isOwn ? 'text-white/70' : 'text-text-on-main-bg-color'">{{ message.fileInfo?.name }}</span>
+          <div class="flex items-center gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
+            <span class="text-[10px]">{{ time }}</span>
+            <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audio message -->
+      <div
+        v-else-if="message.type === MessageType.audio && hasFileInfo"
+        class="rounded-2xl px-3 py-2"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
+      >
+        <audio v-if="fileState.objectUrl" :src="fileState.objectUrl" controls class="h-10 w-full min-w-[200px]" />
+        <button v-else-if="!fileState.loading" class="flex items-center gap-2 text-sm hover:underline" @click="handleVideoAudioLoad">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3" /></svg>
           {{ message.fileInfo?.name }}
-        </span>
-        <div class="flex items-center gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
+        </button>
+        <div v-else class="flex items-center gap-2">
+          <div class="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          <span class="text-xs">Loading...</span>
+        </div>
+        <div class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
           <span class="text-[10px]">{{ time }}</span>
           <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
         </div>
       </div>
-    </div>
 
-    <!-- Audio message -->
-    <div
-      v-else-if="message.type === MessageType.audio && hasFileInfo"
-      class="max-w-[70%] rounded-2xl px-3 py-2"
-      :class="
-        props.isOwn
-          ? 'rounded-br-sm bg-chat-bubble-own text-text-on-bg-ac-color'
-          : 'rounded-bl-sm bg-chat-bubble-other text-text-color'
-      "
-    >
-      <audio
-        v-if="fileState.objectUrl"
-        :src="fileState.objectUrl"
-        controls
-        class="h-10 w-full min-w-[200px]"
-      />
-      <button
-        v-else-if="!fileState.loading"
-        class="flex items-center gap-2 text-sm hover:underline"
-        @click="handleVideoAudioLoad"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="5 3 19 12 5 21 5 3" />
-        </svg>
-        {{ message.fileInfo?.name }}
-      </button>
-      <div v-else class="flex items-center gap-2">
-        <div class="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-        <span class="text-xs">Loading...</span>
-      </div>
+      <!-- File message -->
       <div
-        class="mt-1 flex items-center justify-end gap-1"
-        :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
+        v-else-if="isFile && hasFileInfo"
+        class="rounded-2xl px-3 py-2"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
-        <span class="text-[10px]">{{ time }}</span>
-        <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+        <button class="flex w-full items-center gap-3 text-left" @click="handleFileDownload">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg" :class="props.isOwn ? 'bg-white/20' : 'bg-color-bg-ac/10'">
+            <svg v-if="fileState.loading" class="h-5 w-5 animate-spin" :class="props.isOwn ? 'text-white' : 'text-color-bg-ac'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" /></svg>
+            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="props.isOwn ? 'text-white' : 'text-color-bg-ac'">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium">{{ message.fileInfo?.name }}</p>
+            <p class="text-xs opacity-60">
+              {{ formatSize(message.fileInfo?.size ?? 0) }}
+              <template v-if="fileIcon !== 'file'"> &middot; {{ fileIcon.toUpperCase() }}</template>
+            </p>
+          </div>
+          <svg v-if="!fileState.loading" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 opacity-60">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+        <p v-if="fileState.error" class="mt-1 text-xs text-color-bad">{{ fileState.error }}</p>
+        <div class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
+          <span class="text-[10px]">{{ time }}</span>
+          <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+        </div>
       </div>
-    </div>
 
-    <!-- File message -->
-    <div
-      v-else-if="isFile && hasFileInfo"
-      class="max-w-[70%] rounded-2xl px-3 py-2"
-      :class="
-        props.isOwn
-          ? 'rounded-br-sm bg-chat-bubble-own text-text-on-bg-ac-color'
-          : 'rounded-bl-sm bg-chat-bubble-other text-text-color'
-      "
-    >
-      <button
-        class="flex w-full items-center gap-3 text-left"
-        @click="handleFileDownload"
+      <!-- Text message (default) -->
+      <div
+        v-else
+        class="rounded-2xl px-3 py-1.5"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
-        <!-- File icon -->
+        <!-- Sender name in groups -->
         <div
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-          :class="props.isOwn ? 'bg-white/20' : 'bg-color-bg-ac/10'"
+          v-if="props.isGroup && !props.isOwn && props.isFirstInGroup"
+          class="mb-0.5 text-[13px] font-medium"
+          :style="{ color: senderColor }"
         >
-          <svg
-            v-if="fileState.loading"
-            class="h-5 w-5 animate-spin"
-            :class="props.isOwn ? 'text-white' : 'text-color-bg-ac'"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" />
-          </svg>
-          <svg
-            v-else
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            :class="props.isOwn ? 'text-white' : 'text-color-bg-ac'"
-          >
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
+          {{ chatStore.getDisplayName(message.senderId) }}
         </div>
 
-        <!-- File info -->
-        <div class="min-w-0 flex-1">
-          <p class="truncate text-sm font-medium">
-            {{ message.fileInfo?.name }}
-          </p>
-          <p class="text-xs opacity-60">
-            {{ formatSize(message.fileInfo?.size ?? 0) }}
-            <template v-if="fileIcon !== 'file'"> &middot; {{ fileIcon.toUpperCase() }}</template>
-          </p>
+        <!-- Forwarded indicator -->
+        <div v-if="message.forwardedFrom" class="mb-0.5 truncate text-[11px] italic text-color-bg-ac">
+          Forwarded from {{ chatStore.getDisplayName(message.forwardedFrom.senderName || message.forwardedFrom.senderId) }}
         </div>
 
-        <!-- Download arrow -->
-        <svg
-          v-if="!fileState.loading"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          class="shrink-0 opacity-60"
+        <!-- Reply preview -->
+        <div
+          v-if="message.replyTo"
+          class="mb-1 flex items-start gap-1.5 rounded-lg px-2 py-1"
+          :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
         >
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-      </button>
+          <div class="h-full w-0.5 shrink-0 rounded-full bg-color-bg-ac" />
+          <div class="min-w-0">
+            <div class="truncate text-[11px] font-medium text-color-bg-ac">{{ chatStore.getDisplayName(message.replyTo.senderId) }}</div>
+            <div class="truncate text-[11px] opacity-70">{{ message.replyTo.content }}</div>
+          </div>
+        </div>
 
-      <!-- Error -->
-      <p v-if="fileState.error" class="mt-1 text-xs text-color-bad">
-        {{ fileState.error }}
-      </p>
+        <!-- Message content with parsed links/mentions -->
+        <div class="text-sm">
+          <MessageContent :text="props.message.content" />
+          <!-- Inline timestamp (Telegram-style float) -->
+          <span
+            class="relative -bottom-[3px] ml-2 inline-flex items-center gap-0.5 whitespace-nowrap align-bottom text-[10px]"
+            :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
+          >
+            <span v-if="message.edited" class="italic">edited</span>
+            {{ time }}
+            <span v-if="props.isOwn">{{ statusIcon }}</span>
+          </span>
+        </div>
 
-      <div
-        class="mt-1 flex items-center justify-end gap-1"
-        :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
-      >
-        <span class="text-[10px]">{{ time }}</span>
-        <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
-      </div>
-    </div>
-
-    <!-- Text message (default) -->
-    <div
-      v-else
-      class="max-w-[70%] rounded-2xl px-3 py-2"
-      :class="
-        props.isOwn
-          ? 'rounded-br-sm bg-chat-bubble-own text-text-on-bg-ac-color'
-          : 'rounded-bl-sm bg-chat-bubble-other text-text-color'
-      "
-    >
-      <p class="whitespace-pre-wrap break-words text-sm">
-        {{ props.message.content }}
-      </p>
-      <div
-        class="mt-1 flex items-center justify-end gap-1"
-        :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
-      >
-        <span class="text-[10px]">{{ time }}</span>
-        <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+        <!-- Reactions row -->
+        <div v-if="message.reactions && Object.keys(message.reactions).length" class="mt-1 flex flex-wrap gap-1">
+          <span
+            v-for="(data, emoji) in message.reactions"
+            :key="emoji"
+            class="reaction-chip inline-flex cursor-pointer items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs transition-colors"
+            :class="data.myEventId ? 'bg-color-bg-ac/20 text-color-bg-ac' : 'bg-neutral-grad-0 text-text-on-main-bg-color hover:bg-neutral-grad-2'"
+          >
+            {{ emoji }} {{ data.count > 1 ? data.count : '' }}
+          </span>
+        </div>
       </div>
     </div>
   </div>
 </template>
+
+<style>
+@media (prefers-reduced-motion: no-preference) {
+  .reaction-chip {
+    animation: reaction-pop 0.25s ease;
+  }
+}
+@keyframes reaction-pop {
+  0% { transform: scale(0); }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+</style>

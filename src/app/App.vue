@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { useAuthStore } from "@/entities/auth";
+import { useToast } from "@/shared/lib/use-toast";
+import Toast from "@/shared/ui/toast/Toast.vue";
 
 import { AppPages, AppRoutes, EAppProviders } from "./providers";
+
+const { message: toastMessage, type: toastType, show: toastShow, close: toastClose } = useToast();
 
 provide(EAppProviders.AppRoutes, AppRoutes);
 provide(EAppProviders.AppPages, AppPages);
@@ -9,21 +13,15 @@ provide(EAppProviders.AppPages, AppPages);
 const authStore = useAuthStore();
 
 onMounted(async () => {
-  console.log("[App] onMounted, isAuthenticated=%s", authStore.isAuthenticated);
-
   try {
     await authStore.fetchUserInfo();
-    console.log("[App] fetchUserInfo done");
   } catch (e) {
     console.error("[App] fetchUserInfo error:", e);
   }
 
   // Initialize Matrix on reload if already logged in
   if (authStore.isAuthenticated && !authStore.matrixReady) {
-    console.log("[App] Starting initMatrix...");
     await authStore.initMatrix();
-    console.log("[App] initMatrix done, matrixReady=%s, error=%s",
-      authStore.matrixReady, authStore.matrixError);
   }
 });
 </script>
@@ -33,6 +31,7 @@ onMounted(async () => {
     <transition mode="out-in" name="fade">
       <router-view />
     </transition>
+    <Toast :message="toastMessage" :type="toastType" :show="toastShow" @close="toastClose" />
   </div>
 </template>
 

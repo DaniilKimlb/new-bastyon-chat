@@ -2,6 +2,7 @@ import { ref, type Ref } from "vue";
 import { useAuthStore } from "@/entities/auth";
 import type { FileInfo, Message } from "@/entities/chat";
 import type { PcryptoRoomInstance } from "@/entities/matrix/model/matrix-crypto";
+import { hexEncode } from "@/shared/lib/matrix/functions";
 
 interface FileDownloadState {
   loading: boolean;
@@ -36,13 +37,15 @@ async function downloadAndDecrypt(
 
     // Build event-like object for decryptKey — matches the shape expected by
     // decryptKey(): event.content.pbody.secrets.{keys,block}, event.sender, event.origin_server_ts
+    // Crypto internals use hex-encoded addresses (via getmatrixid), so re-encode the raw address
+    const hexSender = hexEncode(senderId).toLowerCase();
     const event: Record<string, unknown> = {
       content: {
         pbody: {
           secrets: fileInfo.secrets,
         },
       },
-      sender: senderId,
+      sender: hexSender,
       origin_server_ts: timestamp,
     };
 

@@ -82,7 +82,8 @@ interface PocketnetInstanceType {
 declare var bitcoin: BitcoinLib;
 declare var Api: new (instance: PocketnetInstanceType) => {
   initIf(): Promise<void>;
-  rpc(method: string): Promise<{ time: number }>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rpc(method: string, params?: unknown[]): Promise<any>;
   wait: { ready(type: string, timeout: number): Promise<void> };
   ready: { use: boolean };
 };
@@ -98,7 +99,7 @@ declare var pSDK: new (opts: {
   app: PocketnetInstanceType;
 }) => {
   userInfo: {
-    load(addresses: string[]): Promise<void>;
+    load(addresses: string[], light?: boolean, reload?: boolean): Promise<void>;
     get(address: string): UserDataSDK;
   };
 };

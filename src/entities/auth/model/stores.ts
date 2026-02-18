@@ -10,7 +10,7 @@ import {
   Pcrypto,
 } from "@/entities/matrix";
 import type { UserWithPrivateKeys } from "@/entities/matrix/model/matrix-crypto";
-import { getmatrixid } from "@/shared/lib/matrix/functions";
+import { getmatrixid, hexDecode } from "@/shared/lib/matrix/functions";
 import { useLocalStorage } from "@/shared/lib/browser";
 import { convertToHexString } from "@/shared/lib/convert-to-hex-string";
 import { mergeObjects } from "@/shared/lib/merge-objects";
@@ -172,26 +172,33 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
       cryptoInstance.setHelpers({
         getUsersInfo: async (ids: string[]) => {
           // ids are hex-encoded addresses; decode to raw for Pocketnet API
-          console.log("[auth] getUsersInfo called with %d ids: %s", ids.length, ids.map(id => id.slice(0, 16)).join(", "));
           try {
             const rawAddresses = ids.map((id) => hexDecode(id));
-            console.log("[auth] getUsersInfo decoded addresses: %s", rawAddresses.join(", "));
-            await appInitializer.loadUsersInfo(rawAddresses);
-            const result = ids.map((hexId, idx) => {
-              const userData = appInitializer.getUserData(rawAddresses[idx]);
-              const keysRaw = userData?.keys;
-              let keys: string[] = [];
-              if (typeof keysRaw === "string") {
-                keys = keysRaw.split(",").filter((k: string) => k);
-              } else if (Array.isArray(keysRaw)) {
-                keys = keysRaw;
+
+            // Load SDK profiles and raw profiles in PARALLEL
+            const [, rawProfiles] = await Promise.all([
+              appInitializer.loadUsersInfo(rawAddresses),
+              appInitializer.loadUsersInfoRaw(rawAddresses).catch(() => [] as Record<string, unknown>[]),
+            ]);
+
+            // Build lookup map for raw profiles (O(1) instead of O(n) per user)
+            const rawProfileMap = new Map<string, Record<string, unknown>>();
+            for (const p of rawProfiles) {
+              if (p && (p as any).address) {
+                rawProfileMap.set((p as any).address, p);
               }
-              console.log("[auth] getUsersInfo user %s: keysRaw type=%s, %d keys found", hexId.slice(0, 16), typeof keysRaw, keys.length);
-              return { id: hexId, keys };
+            }
+
+            return ids.map((hexId, idx) => {
+              const rawAddr = rawAddresses[idx];
+              const sdkUser = appInitializer.getUserData(rawAddr);
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const sdkKeys: string[] = (sdkUser as any)?.keys ?? [];
+              const rawProfile = rawProfileMap.get(rawAddr);
+              return { id: hexId, keys: sdkKeys, source: rawProfile };
             });
-            return result;
           } catch (e) {
-            console.error("[auth] getUsersInfo error:", e);
+            console.error("[pcrypto] getUsersInfo error:", e);
             return ids.map((id) => ({ id, keys: [] as string[] }));
           }
         },
@@ -223,7 +230,7 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
         onTyping: (_event: unknown, member: unknown) => {
           const m = member as Record<string, unknown>;
           const roomId = (m.roomId as string) ?? "";
-          const userId = getmatrixid((m.userId as string) ?? "");
+          const userId = hexDecode(getmatrixid((m.userId as string) ?? ""));
           const isTyping = m.typing as boolean;
           if (!roomId) return;
           const current = chatStore.getTypingUsers(roomId);

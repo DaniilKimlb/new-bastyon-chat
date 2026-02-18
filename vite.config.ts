@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import vue from "@vitejs/plugin-vue";
 import path from "path";
 import AutoImport from "unplugin-auto-import/vite";
@@ -5,6 +6,11 @@ import Components from "unplugin-vue-components/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  test: {
+    globals: true,
+    environment: "happy-dom",
+    include: ["src/**/*.test.ts"],
+  },
   plugins: [
     vue(),
     Components({

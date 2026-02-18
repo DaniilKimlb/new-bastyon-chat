@@ -210,6 +210,12 @@ export class MatrixClientService {
         try { msg.event.content.pbody = JSON.parse(msg.event.content.body); } catch { /* ignore */ }
       }
 
+      // Pass reaction events from anyone (including self) for local update
+      if (msg.event.type === "m.reaction") {
+        this.onTimeline?.(message, msg.event.room_id);
+        return;
+      }
+
       if (msg.getSender() !== userId) {
         this.onTimeline?.(message, msg.event.room_id);
       }
@@ -347,6 +353,24 @@ export class MatrixClientService {
     } catch (e) {
       console.warn("[matrix-client] scrollback error:", e);
     }
+  }
+
+  /** Send a reaction to an event */
+  async sendReaction(roomId: string, eventId: string, emoji: string): Promise<unknown> {
+    if (!this.client) throw new Error("Client not initialized");
+    return this.client.sendEvent(roomId, "m.reaction", {
+      "m.relates_to": {
+        rel_type: "m.annotation",
+        event_id: eventId,
+        key: emoji,
+      },
+    });
+  }
+
+  /** Redact (delete) an event */
+  async redactEvent(roomId: string, eventId: string, reason?: string): Promise<unknown> {
+    if (!this.client) throw new Error("Client not initialized");
+    return this.client.redactEvent(roomId, eventId, undefined, reason ? { reason } : undefined);
   }
 
   /** Set typing indicator */

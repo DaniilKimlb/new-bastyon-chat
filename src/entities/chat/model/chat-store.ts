@@ -2,85 +2,14 @@ import { getMatrixClientService } from "@/entities/matrix";
 import type { MatrixKit } from "@/entities/matrix";
 import type { Pcrypto, PcryptoRoomInstance } from "@/entities/matrix/model/matrix-crypto";
 import { getmatrixid } from "@/shared/lib/matrix/functions";
+import { matrixIdToAddress, messageTypeFromMime, parseFileInfo } from "../lib/chat-helpers";
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef } from "vue";
 
-import type { ChatRoom, FileInfo, Message } from "./types";
+import type { ChatRoom, FileInfo, Message, ReplyTo } from "./types";
 import { MessageStatus, MessageType } from "./types";
 
 const NAMESPACE = "chat";
-
-/** Determine MessageType from MIME type string */
-function messageTypeFromMime(mime: string): MessageType {
-  if (!mime) return MessageType.file;
-  if (mime.startsWith("image/")) return MessageType.image;
-  if (mime.startsWith("video/")) return MessageType.video;
-  if (mime.startsWith("audio/")) return MessageType.audio;
-  return MessageType.file;
-}
-
-/** Parse file metadata from raw event content.
- *  m.file events: body is JSON string with {name, type, size, url, secrets}
- *                 matrix-client.ts already parses it into content.pbody
- *  m.image events: info contains {w, h, secrets, url, ...} */
-function parseFileInfo(content: Record<string, unknown>, msgtype: string): FileInfo | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pbody = content.pbody as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const info = content.info as any;
-
-  if (msgtype === "m.file" && pbody) {
-    return {
-      name: pbody.name ?? "file",
-      type: (pbody.type ?? "").replace("encrypted/", ""),
-      size: pbody.size ?? 0,
-      url: pbody.url ?? "",
-      secrets: pbody.secrets ? {
-        block: pbody.secrets.block,
-        keys: pbody.secrets.keys,
-        v: pbody.secrets.v ?? pbody.secrets.version ?? 1,
-      } : undefined,
-    };
-  }
-
-  if (msgtype === "m.image" && info) {
-    return {
-      name: (content.body as string) ?? "image",
-      type: info.mimetype ?? "image/jpeg",
-      size: info.size ?? 0,
-      url: info.url ?? (content.url as string) ?? "",
-      w: info.w,
-      h: info.h,
-      secrets: info.secrets ? {
-        block: info.secrets.block,
-        keys: info.secrets.keys,
-        v: info.secrets.v ?? info.secrets.version ?? 1,
-      } : undefined,
-    };
-  }
-
-  // Try parsing body as JSON for m.file without pbody
-  if (msgtype === "m.file" && typeof content.body === "string") {
-    try {
-      const parsed = JSON.parse(content.body);
-      if (parsed.url) {
-        return {
-          name: parsed.name ?? "file",
-          type: (parsed.type ?? "").replace("encrypted/", ""),
-          size: parsed.size ?? 0,
-          url: parsed.url,
-          secrets: parsed.secrets ? {
-            block: parsed.secrets.block,
-            keys: parsed.secrets.keys,
-            v: parsed.secrets.v ?? parsed.secrets.version ?? 1,
-          } : undefined,
-        };
-      }
-    } catch { /* not JSON, ignore */ }
-  }
-
-  return undefined;
-}
 
 /** Extract raw event data from a MatrixEvent object */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,7 +80,7 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
       lastMessage = {
         id: raw.event_id as string,
         roomId,
-        senderId: getmatrixid(raw.sender as string),
+        senderId: matrixIdToAddress(raw.sender as string),
         content: previewBody,
         timestamp: (raw.origin_server_ts as number) ?? 0,
         status: MessageStatus.sent,
@@ -161,9 +90,52 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
     if (lastMessage && lastTs) break;
   }
 
+  // Resolve display name
+  let displayName = name;
+  if (!isGroup) {
+    // 1:1 chat: use the other member's rawDisplayName
+    const otherMember = members.find(
+      (m: Record<string, unknown>) => getmatrixid(m.userId as string) !== getmatrixid(myUserId)
+    );
+    displayName = (otherMember?.rawDisplayName as string)
+      || (otherMember?.name as string)
+      || (otherMember ? matrixIdToAddress(otherMember.userId as string) : null)
+      || name;
+  } else if (name.startsWith("#") && name.length > 20) {
+    // Group with auto-generated hash name: build from member display names
+    const memberNames = members
+      .filter((m: Record<string, unknown>) => getmatrixid(m.userId as string) !== getmatrixid(myUserId))
+      .map((m: Record<string, unknown>) => (m.rawDisplayName as string) || (m.name as string) || "?")
+      .slice(0, 3);
+    displayName = memberNames.join(", ") + (members.length > 4 ? "..." : "");
+  }
+
+  // Resolve avatar URL
+  let avatar: string | undefined;
+  if (!isGroup) {
+    // 1:1: use the other member's address (UserAvatar will resolve via Pocketnet)
+    // We store the address so ContactList can use UserAvatar
+    const otherMember = members.find(
+      (m: Record<string, unknown>) => getmatrixid(m.userId as string) !== getmatrixid(myUserId)
+    );
+    if (otherMember) {
+      avatar = `__pocketnet__:${matrixIdToAddress(otherMember.userId as string)}`;
+    }
+  } else {
+    // Group: try to get room avatar from Matrix state
+    try {
+      const avatarEvent = room.currentState?.getStateEvents?.("m.room.avatar", "");
+      const avatarUrl = avatarEvent?.getContent?.()?.url ?? avatarEvent?.event?.content?.url;
+      if (avatarUrl && typeof avatarUrl === "string") {
+        avatar = avatarUrl;
+      }
+    } catch { /* ignore */ }
+  }
+
   return {
     id: roomId,
-    name: isGroup ? name : memberIds.find((id: string) => id !== getmatrixid(myUserId)) ?? name,
+    name: displayName,
+    avatar,
     lastMessage,
     unreadCount,
     members: memberIds,
@@ -177,6 +149,103 @@ export const useChatStore = defineStore(NAMESPACE, () => {
   const activeRoomId = ref<string | null>(null);
   const messages = ref<Record<string, Message[]>>({});
   const typing = ref<Record<string, string[]>>({});
+  const replyingTo = ref<ReplyTo | null>(null);
+
+  // Edit/delete state (Batch 3)
+  const editingMessage = ref<{ id: string; content: string } | null>(null);
+  const deletingMessage = ref<Message | null>(null);
+
+  // User display name cache: address → display name
+  const userDisplayNames = ref<Record<string, string>>({});
+
+  /** Look up a user's display name; falls back to truncated address */
+  const getDisplayName = (address: string): string => {
+    if (!address) return "?";
+    const cached = userDisplayNames.value[address];
+    if (cached) return cached;
+    // Fallback: truncated address
+    if (address.length > 16) return address.slice(0, 8) + "\u2026" + address.slice(-4);
+    return address;
+  };
+
+  // Selection/forward state (Batch 4)
+  const selectionMode = ref(false);
+  const selectedMessageIds = ref<Set<string>>(new Set());
+  const forwardingMessages = ref(false);
+
+  const enterSelectionMode = (messageId: string) => {
+    selectionMode.value = true;
+    selectedMessageIds.value = new Set([messageId]);
+  };
+
+  const toggleSelection = (messageId: string) => {
+    const s = selectedMessageIds.value;
+    if (s.has(messageId)) s.delete(messageId);
+    else s.add(messageId);
+    selectedMessageIds.value = new Set(s);
+  };
+
+  const exitSelectionMode = () => {
+    selectionMode.value = false;
+    selectedMessageIds.value = new Set();
+    forwardingMessages.value = false;
+  };
+
+  // Pinned messages (Batch 10)
+  const pinnedMessages = ref<Message[]>([]);
+  const pinnedMessageIndex = ref(0);
+
+  const pinMessage = (messageId: string) => {
+    const roomId = activeRoomId.value;
+    if (!roomId) return;
+    const msg = messages.value[roomId]?.find(m => m.id === messageId);
+    if (msg && !pinnedMessages.value.some(p => p.id === messageId)) {
+      pinnedMessages.value.push(msg);
+      pinnedMessageIndex.value = pinnedMessages.value.length - 1;
+    }
+  };
+
+  const unpinMessage = (messageId: string) => {
+    pinnedMessages.value = pinnedMessages.value.filter(m => m.id !== messageId);
+    if (pinnedMessageIndex.value >= pinnedMessages.value.length) {
+      pinnedMessageIndex.value = Math.max(0, pinnedMessages.value.length - 1);
+    }
+  };
+
+  const cyclePinnedMessage = (direction: 1 | -1) => {
+    if (pinnedMessages.value.length === 0) return;
+    pinnedMessageIndex.value = (pinnedMessageIndex.value + direction + pinnedMessages.value.length) % pinnedMessages.value.length;
+  };
+
+  // Room-level pin/mute (Batch 7)
+  const pinnedRoomIds = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem("chat_pinned_rooms") || "[]")));
+  const mutedRoomIds = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem("chat_muted_rooms") || "[]")));
+
+  const persistRoomSets = () => {
+    localStorage.setItem("chat_pinned_rooms", JSON.stringify([...pinnedRoomIds.value]));
+    localStorage.setItem("chat_muted_rooms", JSON.stringify([...mutedRoomIds.value]));
+  };
+
+  const togglePinRoom = (roomId: string) => {
+    const s = new Set(pinnedRoomIds.value);
+    if (s.has(roomId)) s.delete(roomId);
+    else s.add(roomId);
+    pinnedRoomIds.value = s;
+    persistRoomSets();
+  };
+
+  const toggleMuteRoom = (roomId: string) => {
+    const s = new Set(mutedRoomIds.value);
+    if (s.has(roomId)) s.delete(roomId);
+    else s.add(roomId);
+    mutedRoomIds.value = s;
+    persistRoomSets();
+  };
+
+  const markRoomAsRead = (roomId: string) => {
+    const room = rooms.value.find(r => r.id === roomId);
+    if (room) room.unreadCount = 0;
+  };
 
   // References to matrix helpers (set by auth store after init)
   const matrixKitRef = shallowRef<MatrixKit | null>(null);
@@ -190,8 +259,17 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     activeRoomId.value ? (messages.value[activeRoomId.value] ?? []) : []
   );
 
+  const activeMediaMessages = computed(() =>
+    activeMessages.value.filter(m => m.type === MessageType.image || m.type === MessageType.video)
+  );
+
   const sortedRooms = computed(() =>
-    [...rooms.value].sort((a, b) => b.updatedAt - a.updatedAt)
+    [...rooms.value].sort((a, b) => {
+      const aPinned = pinnedRoomIds.value.has(a.id) ? 1 : 0;
+      const bPinned = pinnedRoomIds.value.has(b.id) ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned;
+      return b.updatedAt - a.updatedAt;
+    })
   );
 
   const totalUnread = computed(() =>
@@ -218,18 +296,89 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matrixRooms = matrixService.getRooms() as any[];
 
-    console.log("[chat-store] refreshRooms: %d rooms from SDK", matrixRooms.length);
-
     const interactiveRooms = matrixRooms.filter((r) => {
       const membership = r.selfMembership ?? r.getMyMembership?.();
-      return membership === "join" || membership === "invite";
+      if (membership !== "join" && membership !== "invite") return false;
+
+      // Filter out spaces (m.space rooms)
+      try {
+        const createEvent = r.currentState?.getStateEvents?.("m.room.create", "");
+        const createContent = createEvent?.getContent?.() ?? createEvent?.event?.content;
+        if (createContent?.type === "m.space") return false;
+      } catch { /* ignore */ }
+
+      // Filter rooms with no other members (self-only rooms)
+      const memberCount = r.getJoinedMemberCount?.() ?? r.currentState?.getJoinedMemberCount?.() ?? 0;
+      if (memberCount < 2) {
+        // Keep rooms that have timeline events (could be an old chat where other member left)
+        const hasTimeline = (r.timeline?.length ?? 0) > 0 ||
+          (r.getLiveTimeline?.()?.getEvents?.()?.length ?? 0) > 0;
+        if (!hasTimeline) return false;
+      }
+
+      return true;
     });
 
-    console.log("[chat-store] refreshRooms: %d interactive rooms", interactiveRooms.length);
+    rooms.value = interactiveRooms.map((r) => {
+      const chatRoom = matrixRoomToChatRoom(r, kit, myUserId);
+      // Preserve unreadCount=0 for active room — SDK hasn't processed the read receipt yet
+      if (chatRoom.id === activeRoomId.value) chatRoom.unreadCount = 0;
+      return chatRoom;
+    });
 
-    rooms.value = interactiveRooms.map((r) =>
-      matrixRoomToChatRoom(r, kit, myUserId)
-    );
+    // Build user display name cache from room members
+    for (const r of interactiveRooms) {
+      const members = kit.getRoomMembers(r);
+      for (const m of members) {
+        const addr = matrixIdToAddress((m as Record<string, unknown>).userId as string);
+        const dn = (m as Record<string, unknown>).rawDisplayName as string
+          || (m as Record<string, unknown>).name as string;
+        if (addr && dn && dn !== addr) {
+          userDisplayNames.value[addr] = dn;
+        }
+      }
+    }
+
+    // Decrypt [encrypted] previews asynchronously
+    decryptRoomPreviews(interactiveRooms);
+  };
+
+  /** Decrypt last-message previews for rooms that show [encrypted] */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const decryptRoomPreviews = async (matrixRooms: any[]) => {
+    for (const matrixRoom of matrixRooms) {
+      const roomId = matrixRoom.roomId as string;
+      const room = rooms.value.find(r => r.id === roomId);
+      if (!room?.lastMessage || room.lastMessage.content !== "[encrypted]") continue;
+
+      try {
+        const roomCrypto = await ensureRoomCrypto(roomId);
+        if (!roomCrypto) continue;
+
+        // Find the last encrypted message event
+        let timelineEvents: unknown[] = [];
+        try {
+          const lt = matrixRoom.getLiveTimeline?.();
+          if (lt) timelineEvents = lt.getEvents?.() ?? [];
+          if (!timelineEvents.length) timelineEvents = matrixRoom.timeline ?? [];
+        } catch { /* ignore */ }
+
+        for (let i = timelineEvents.length - 1; i >= 0; i--) {
+          const raw = getRawEvent(timelineEvents[i]);
+          if (!raw?.content || raw.type !== "m.room.message") continue;
+          const content = raw.content as Record<string, unknown>;
+          if (content.msgtype !== "m.encrypted") continue;
+
+          try {
+            const decrypted = await roomCrypto.decryptEvent(raw);
+            if (decrypted.body && room.lastMessage) {
+              room.lastMessage.content = decrypted.body;
+            }
+          } catch { /* leave as [encrypted] */ }
+          break;
+        }
+      } catch { /* ignore */ }
+    }
   };
 
   const setActiveRoom = (roomId: string | null) => {
@@ -309,6 +458,26 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
+  /** Update content of a message (for edit) */
+  const updateMessageContent = (roomId: string, messageId: string, newContent: string) => {
+    const roomMessages = messages.value[roomId];
+    if (roomMessages) {
+      const msg = roomMessages.find((m) => m.id === messageId);
+      if (msg) {
+        msg.content = newContent;
+        msg.edited = true;
+      }
+    }
+  };
+
+  /** Remove a single message from a room */
+  const removeMessage = (roomId: string, messageId: string) => {
+    const roomMessages = messages.value[roomId];
+    if (roomMessages) {
+      messages.value[roomId] = roomMessages.filter((m) => m.id !== messageId);
+    }
+  };
+
   /** Set typing indicator for a room */
   const setTypingUsers = (roomId: string, userIds: string[]) => {
     typing.value[roomId] = userIds;
@@ -340,75 +509,140 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
-  /** Parse timeline events into Message array */
+  /** Parse a single timeline event into a Message (or null if not a message) */
+  const parseSingleEvent = async (
+    event: unknown,
+    roomId: string,
+    roomCrypto: PcryptoRoomInstance | undefined,
+  ): Promise<Message | null> => {
+    const raw = getRawEvent(event);
+    if (!raw?.content || raw.type !== "m.room.message") return null;
+
+    const content = raw.content as Record<string, unknown>;
+    let body = (content.body as string) ?? "";
+    let msgType = MessageType.text;
+
+    // Try to decrypt if encrypted
+    if (content.msgtype === "m.encrypted") {
+      if (roomCrypto) {
+        try {
+          const decrypted = await roomCrypto.decryptEvent(raw);
+          body = decrypted.body;
+        } catch {
+          body = "[encrypted]";
+        }
+      } else {
+        body = "[no room crypto]";
+      }
+    }
+
+    // Determine message type and parse file info
+    const mtype = content.msgtype as string;
+    let fileInfo: FileInfo | undefined;
+
+    if (mtype === "m.image" || mtype === "m.file") {
+      fileInfo = parseFileInfo(content, mtype);
+      if (fileInfo) {
+        msgType = mtype === "m.image"
+          ? MessageType.image
+          : messageTypeFromMime(fileInfo.type);
+        body = fileInfo.name;
+      } else {
+        msgType = mtype === "m.image" ? MessageType.image : MessageType.file;
+      }
+    }
+
+    // Parse reply reference
+    let replyTo: ReplyTo | undefined;
+    const relatesTo = content["m.relates_to"] as Record<string, unknown> | undefined;
+    const inReplyTo = relatesTo?.["m.in_reply_to"] as Record<string, unknown> | undefined;
+    if (inReplyTo?.event_id) {
+      replyTo = {
+        id: inReplyTo.event_id as string,
+        senderId: "",
+        content: "",
+      };
+    }
+
+    return {
+      id: raw.event_id as string,
+      roomId,
+      senderId: matrixIdToAddress(raw.sender as string),
+      content: body,
+      timestamp: (raw.origin_server_ts as number) ?? 0,
+      status: MessageStatus.sent,
+      type: msgType,
+      fileInfo,
+      replyTo,
+    };
+  };
+
+  /** Parse timeline events into Message array — decrypts in parallel, collects reactions */
   const parseTimelineEvents = async (
     timelineEvents: unknown[],
     roomId: string,
   ): Promise<Message[]> => {
     // Ensure room crypto is initialized before parsing
     const roomCrypto = await ensureRoomCrypto(roomId);
-    const msgs: Message[] = [];
+
+    // Separate messages and reactions
+    const messageEvents: unknown[] = [];
+    const reactionEvents: Record<string, unknown>[] = [];
 
     for (const event of timelineEvents) {
-      try {
-        const raw = getRawEvent(event);
-        if (!raw) continue;
+      const raw = getRawEvent(event);
+      if (!raw) continue;
+      if (raw.type === "m.reaction" && raw.content) {
+        reactionEvents.push(raw);
+      } else {
+        messageEvents.push(event);
+      }
+    }
 
-        // Log event types for debugging
-        if (msgs.length === 0 && timelineEvents.indexOf(event) < 5) {
-          console.log("[chat-store] event type=%s sender=%s", raw.type, raw.sender);
+    // Decrypt all messages in parallel
+    const results = await Promise.all(
+      messageEvents.map((event) => parseSingleEvent(event, roomId, roomCrypto).catch(() => null))
+    );
+
+    const msgs = results.filter((m): m is Message => m !== null);
+
+    // Apply reactions to messages
+    const msgMap = new Map(msgs.map(m => [m.id, m]));
+    const matrixService = getMatrixClientService();
+    for (const raw of reactionEvents) {
+      const content = raw.content as Record<string, unknown>;
+      const relatesTo = content?.["m.relates_to"] as Record<string, unknown> | undefined;
+      if (!relatesTo) continue;
+      const targetId = relatesTo.event_id as string;
+      const emoji = relatesTo.key as string;
+      if (!targetId || !emoji) continue;
+
+      const targetMsg = msgMap.get(targetId);
+      if (!targetMsg) continue;
+
+      if (!targetMsg.reactions) targetMsg.reactions = {};
+      if (!targetMsg.reactions[emoji]) {
+        targetMsg.reactions[emoji] = { count: 0, users: [] };
+      }
+      const reactionSenderId = matrixIdToAddress(raw.sender as string);
+      const rd = targetMsg.reactions[emoji];
+      if (!rd.users.includes(reactionSenderId)) {
+        rd.users.push(reactionSenderId);
+        rd.count++;
+        if (matrixService.isMe(raw.sender as string)) {
+          rd.myEventId = raw.event_id as string;
         }
+      }
+    }
 
-        if (!raw.content) continue;
-        if (raw.type !== "m.room.message") continue;
-
-        const content = raw.content as Record<string, unknown>;
-        let body = (content.body as string) ?? "";
-        let msgType = MessageType.text;
-
-        // Try to decrypt if encrypted (msgtype "m.encrypted" per bastyon-chat format)
-        if (content.msgtype === "m.encrypted") {
-          if (roomCrypto) {
-            try {
-              const decrypted = await roomCrypto.decryptEvent(raw);
-              body = decrypted.body;
-            } catch (e) {
-              console.error("[chat-store] decrypt failed for event %s:", raw.event_id, e);
-              body = "[encrypted]";
-            }
-          } else {
-            body = "[no room crypto]";
-          }
+    // Resolve reply references (fill in sender/content from parsed messages)
+    for (const msg of msgs) {
+      if (msg.replyTo?.id) {
+        const referenced = msgMap.get(msg.replyTo.id);
+        if (referenced) {
+          msg.replyTo.senderId = referenced.senderId;
+          msg.replyTo.content = referenced.content.slice(0, 100);
         }
-
-        // Determine message type and parse file info
-        const mtype = content.msgtype as string;
-        let fileInfo: FileInfo | undefined;
-
-        if (mtype === "m.image" || mtype === "m.file") {
-          fileInfo = parseFileInfo(content, mtype);
-          if (fileInfo) {
-            msgType = mtype === "m.image"
-              ? MessageType.image
-              : messageTypeFromMime(fileInfo.type);
-            body = fileInfo.name;
-          } else {
-            msgType = mtype === "m.image" ? MessageType.image : MessageType.file;
-          }
-        }
-
-        msgs.push({
-          id: raw.event_id as string,
-          roomId,
-          senderId: getmatrixid(raw.sender as string),
-          content: body,
-          timestamp: (raw.origin_server_ts as number) ?? 0,
-          status: MessageStatus.sent,
-          type: msgType,
-          fileInfo,
-        });
-      } catch (e) {
-        console.error("[chat-store] parseEvent error (skipping):", e);
       }
     }
 
@@ -452,11 +686,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       }
 
       const timelineEvents = getTimelineEvents(matrixRoom);
-      console.log("[chat-store] loadRoomMessages: %d events for room %s",
-        timelineEvents.length, roomId);
-
       const msgs = await parseTimelineEvents(timelineEvents, roomId);
-      console.log("[chat-store] loadRoomMessages: %d messages parsed", msgs.length);
       setMessages(roomId, msgs);
     } catch (e) {
       console.error("[chat-store] loadRoomMessages fatal error for room %s:", roomId, e);
@@ -465,11 +695,54 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
+  /** Apply a reaction event to a stored message */
+  const applyReaction = (roomId: string, raw: Record<string, unknown>) => {
+    const content = raw.content as Record<string, unknown>;
+    const relatesTo = content?.["m.relates_to"] as Record<string, unknown> | undefined;
+    if (!relatesTo) return;
+
+    const targetEventId = relatesTo.event_id as string;
+    const emoji = relatesTo.key as string;
+    if (!targetEventId || !emoji) return;
+
+    const roomMessages = messages.value[roomId];
+    if (!roomMessages) return;
+
+    const targetMsg = roomMessages.find(m => m.id === targetEventId);
+    if (!targetMsg) return;
+
+    if (!targetMsg.reactions) targetMsg.reactions = {};
+    if (!targetMsg.reactions[emoji]) {
+      targetMsg.reactions[emoji] = { count: 0, users: [] };
+    }
+
+    const reactionSender = matrixIdToAddress(raw.sender as string);
+    const reactionData = targetMsg.reactions[emoji];
+    if (!reactionData.users.includes(reactionSender)) {
+      reactionData.users.push(reactionSender);
+      reactionData.count++;
+
+      // Track own reaction event ID for toggle/redact
+      const matrixService = getMatrixClientService();
+      if (matrixService.isMe(raw.sender as string)) {
+        reactionData.myEventId = raw.event_id as string;
+      }
+    }
+  };
+
   /** Handle incoming timeline event from Matrix sync */
   const handleTimelineEvent = async (event: unknown, roomId: string) => {
     try {
       const raw = getRawEvent(event);
-      if (!raw?.content || raw.type !== "m.room.message") return;
+      if (!raw?.content) return;
+
+      // Handle reaction events
+      if (raw.type === "m.reaction") {
+        applyReaction(roomId, raw);
+        return;
+      }
+
+      if (raw.type !== "m.room.message") return;
 
       const content = raw.content as Record<string, unknown>;
       let body = (content.body as string) ?? "";
@@ -506,15 +779,31 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         }
       }
 
+      // Parse reply reference
+      let replyTo: ReplyTo | undefined;
+      const relatesTo = content["m.relates_to"] as Record<string, unknown> | undefined;
+      const inReplyTo = relatesTo?.["m.in_reply_to"] as Record<string, unknown> | undefined;
+      if (inReplyTo?.event_id) {
+        const replyId = inReplyTo.event_id as string;
+        // Try to find the referenced message in already loaded messages
+        const referenced = messages.value[roomId]?.find(m => m.id === replyId);
+        replyTo = {
+          id: replyId,
+          senderId: referenced?.senderId ?? "",
+          content: referenced?.content.slice(0, 100) ?? "",
+        };
+      }
+
       const message: Message = {
         id: raw.event_id as string,
         roomId,
-        senderId: getmatrixid(raw.sender as string),
+        senderId: matrixIdToAddress(raw.sender as string),
         content: body,
         timestamp: (raw.origin_server_ts as number) ?? Date.now(),
         status: MessageStatus.sent,
         type: msgType,
         fileInfo,
+        replyTo,
       };
 
       addMessage(roomId, message);
@@ -527,25 +816,48 @@ export const useChatStore = defineStore(NAMESPACE, () => {
   };
 
   return {
+    activeMediaMessages,
     activeMessages,
     activeRoom,
     activeRoomId,
     addMessage,
     addRoom,
+    deletingMessage,
+    editingMessage,
+    enterSelectionMode,
+    exitSelectionMode,
+    forwardingMessages,
+    getDisplayName,
     getTypingUsers,
     handleTimelineEvent,
     loadRoomMessages,
+    markRoomAsRead,
     messages,
+    mutedRoomIds,
+    pinMessage,
+    pinnedMessageIndex,
+    pinnedMessages,
+    pinnedRoomIds,
+    cyclePinnedMessage,
     refreshRooms,
+    removeMessage,
     removeRoom,
+    replyingTo,
     rooms,
+    selectedMessageIds,
+    selectionMode,
     setActiveRoom,
     setHelpers,
     setMessages,
     setTypingUsers,
     sortedRooms,
+    toggleMuteRoom,
+    togglePinRoom,
+    toggleSelection,
     totalUnread,
     typing,
+    unpinMessage,
+    updateMessageContent,
     updateMessageStatus,
   };
 });

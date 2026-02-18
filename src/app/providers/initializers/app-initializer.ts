@@ -83,10 +83,13 @@ export class AppInitializer {
     return Promise.resolve(null);
   }
 
-  /** Load user info for multiple addresses (for encryption key resolution) */
+  /** Load user info for multiple addresses (for encryption key resolution).
+   *  Original bastyon-chat uses light=true: psdk.userInfo.load(addresses, true, reload)
+   *  This uses userInfoLight storage, queue-based processing, and maxcount=70. */
   async loadUsersInfo(addresses: string[]): Promise<void> {
     if (!addresses.length) return;
-    await this.psdk.userInfo.load(addresses);
+    // Must pass light=true to match original bastyon-chat behavior
+    await this.psdk.userInfo.load(addresses, true);
   }
 
   /** Get cached user data by raw address */
@@ -95,6 +98,37 @@ export class AppInitializer {
       return this.psdk.userInfo.get(address) as UserData | null;
     } catch {
       return null;
+    }
+  }
+
+  /** Get RAW user profiles via RPC — preserves all fields including numeric `id`.
+   *  Must pass '1' as second param (light mode) to match SDK behavior. */
+  async loadUsersInfoRaw(addresses: string[]): Promise<Record<string, unknown>[]> {
+    if (!addresses.length) return [];
+    try {
+      // Match SDK: api.rpc('getuserprofile', [addresses, '1'])
+      const data = await this.api.rpc("getuserprofile", [addresses, "1"]);
+      return (data as Record<string, unknown>[]) || [];
+    } catch (e) {
+      console.error("[appInit] loadUsersInfoRaw error:", e);
+      return [];
+    }
+  }
+
+  /** Search Pocketnet users by text query — calls "searchusers" RPC */
+  async searchUsers(query: string): Promise<Array<{ address: string; name: string; image: string }>> {
+    try {
+      await this.initApi();
+      const data = await this.api.rpc("searchusers", [query, "users"]);
+      const results = (data as Array<Record<string, unknown>>) || [];
+      return results.map((info) => ({
+        address: (info.address as string) ?? "",
+        name: info.name ? decodeURI(info.name as string) : "",
+        image: (info.i as string) ?? (info.image as string) ?? "",
+      })).filter(u => u.address);
+    } catch (e) {
+      console.error("[appInit] searchUsers error:", e);
+      return [];
     }
   }
 

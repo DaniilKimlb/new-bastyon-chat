@@ -5,6 +5,7 @@ import { route as loginRoute } from "./login";
 import { route as profileRoute } from "./profile";
 import { route as profileEditRoute } from "./profile-edit";
 import { route as settingsRoute } from "./settings";
+import { route as appearanceRoute } from "./appearance";
 import { route as welcomeRoute } from "./welcome";
 
 export const routes: RouteRecordRaw[] = [
@@ -14,6 +15,7 @@ export const routes: RouteRecordRaw[] = [
   profileRoute,
   profileEditRoute,
   settingsRoute,
+  appearanceRoute,
   {
     path: "/:pathMatch(.*)*",
     redirect: "/welcome"

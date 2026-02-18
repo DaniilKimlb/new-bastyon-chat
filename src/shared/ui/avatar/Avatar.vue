@@ -11,6 +11,30 @@ const props = withDefaults(defineProps<Props>(), {
   size: "md"
 });
 
+// Telegram-style avatar colors (7 accent colors)
+const AVATAR_COLORS = [
+  "#E17076", // red
+  "#FAA774", // orange
+  "#A695E7", // purple
+  "#7BC862", // green
+  "#6EC9CB", // teal
+  "#65AADD", // blue
+  "#EE7AAE", // pink
+];
+
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+const avatarColor = computed(() => {
+  const key = props.name || "?";
+  return AVATAR_COLORS[hashString(key) % AVATAR_COLORS.length];
+});
+
 const initials = computed(() => {
   if (!props.name) return "?";
   return props.name
@@ -34,7 +58,8 @@ const showFallback = computed(() => !props.src || imgError.value);
 <template>
   <div
     :class="sizeClass"
-    class="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-color-bg-ac text-text-on-bg-ac-color"
+    class="flex shrink-0 items-center justify-center overflow-hidden rounded-full"
+    :style="showFallback ? { backgroundColor: avatarColor } : {}"
   >
     <img
       v-if="!showFallback"
@@ -43,6 +68,6 @@ const showFallback = computed(() => !props.src || imgError.value);
       class="h-full w-full object-cover"
       @error="imgError = true"
     />
-    <span v-else class="font-medium">{{ initials }}</span>
+    <span v-else class="font-medium text-white">{{ initials }}</span>
   </div>
 </template>

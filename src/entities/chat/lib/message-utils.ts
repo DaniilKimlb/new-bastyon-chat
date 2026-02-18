@@ -18,8 +18,8 @@ export function groupMessagesByDate(messages: Message[]): Map<string, Message[]>
   return groups;
 }
 
-export function isConsecutiveMessage(prev: Message | undefined, current: Message): boolean {
-  if (!prev) return false;
+export function isConsecutiveMessage(prev: Message | undefined, current: Message | undefined): boolean {
+  if (!prev || !current) return false;
   return (
     prev.senderId === current.senderId &&
     current.timestamp - prev.timestamp < 60_000
