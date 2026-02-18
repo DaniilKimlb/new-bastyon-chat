@@ -44,6 +44,16 @@ export default {
         "chat-sidebar": "rgb(var(--chat-sidebar))",
         "chat-input-bg": "rgb(var(--chat-input-bg))"
       },
+      fontSize: {
+        "chat-base": "var(--font-size-base)",
+      },
+      borderRadius: {
+        "bubble": "var(--bubble-radius)",
+        "bubble-sm": "var(--bubble-radius-small)",
+      },
+      gap: {
+        "msg": "var(--message-spacing)",
+      },
       spacing: {
         "app-margin-bottom": "var(--app-margin-bottom)",
         "app-margin-bottom-default": "var(--app-margin-bottom-default)",

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import MainLayout from "@/widgets/layouts/MainLayout.vue";
 import { useThemeStore } from "@/entities/theme";
+import { Toggle } from "@/shared/ui/toggle";
 
 const themeStore = useThemeStore();
 const router = useRouter();
@@ -40,16 +41,10 @@ const router = useRouter();
             </svg>
             <span class="text-text-color">Dark Mode</span>
           </div>
-          <button
-            class="h-6 w-11 rounded-full transition-colors"
-            :class="themeStore.isDarkMode ? 'bg-color-bg-ac' : 'bg-neutral-grad-2'"
-            @click="themeStore.toggleTheme()"
-          >
-            <div
-              class="h-5 w-5 rounded-full bg-white shadow transition-transform"
-              :class="themeStore.isDarkMode ? 'translate-x-5' : 'translate-x-0.5'"
-            />
-          </button>
+          <Toggle
+            :model-value="themeStore.isDarkMode"
+            @update:model-value="themeStore.toggleTheme()"
+          />
         </div>
 
         <!-- Notifications (placeholder) -->

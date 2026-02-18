@@ -2,10 +2,12 @@
 import type { Message } from "@/entities/chat";
 import { useChatStore, MessageStatus, MessageType } from "@/entities/chat";
 import { formatTime } from "@/shared/lib/format";
+import { stripMentionAddresses } from "@/shared/lib/message-format";
 import { useFileDownload } from "../model/use-file-download";
 import MessageContent from "./MessageContent.vue";
 import { ref, onMounted } from "vue";
 import { useLongPress, useSwipeGesture } from "@/shared/lib/gestures";
+import { useThemeStore } from "@/entities/theme";
 
 interface Props {
   message: Message;
@@ -20,15 +22,16 @@ const props = withDefaults(defineProps<Props>(), { isGroup: false, isFirstInGrou
 /** Tail (pointed corner) only on the last message in a group (= showAvatar) */
 const tailClass = computed(() => {
   if (!props.showAvatar) return "";
-  return props.isOwn ? "rounded-br-sm" : "rounded-bl-sm";
+  return props.isOwn ? "rounded-br-bubble-sm" : "rounded-bl-bubble-sm";
 });
 const emit = defineEmits<{
   reply: [message: Message];
   contextmenu: [payload: { message: Message; x: number; y: number }];
   openMedia: [message: Message];
+  scrollToReply: [messageId: string];
 }>();
 
-const { onPointerdown, onPointermove, onPointerup, onPointerleave, onContextmenu: preventContextmenu } = useLongPress({
+const { onPointerdown, onPointermove, onPointerup, onPointerleave } = useLongPress({
   onTrigger: (e) => {
     emit("contextmenu", { message: props.message, x: e.clientX, y: e.clientY });
   },
@@ -40,7 +43,7 @@ const handleRightClick = (e: MouseEvent) => {
 };
 
 const { offsetX: swipeOffsetX, isSwiping, onTouchstart, onTouchmove, onTouchend } = useSwipeGesture({
-  direction: "right",
+  direction: "left",
   threshold: 60,
   maxOffset: 100,
   onTrigger: () => {
@@ -49,13 +52,14 @@ const { offsetX: swipeOffsetX, isSwiping, onTouchstart, onTouchmove, onTouchend 
 });
 
 const swipeStyle = computed(() => ({
-  transform: swipeOffsetX.value > 0 ? `translateX(${swipeOffsetX.value}px)` : undefined,
+  transform: swipeOffsetX.value > 0 ? `translateX(${-swipeOffsetX.value}px)` : undefined,
   transition: isSwiping.value ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
 }));
 
 const swipeArrowOpacity = computed(() => Math.min(swipeOffsetX.value / 60, 1));
 
 const chatStore = useChatStore();
+const themeStore = useThemeStore();
 const isSelected = computed(() => chatStore.selectedMessageIds.has(props.message.id));
 
 const handleBubbleClick = () => {
@@ -125,9 +129,22 @@ const handleReply = () => {
   chatStore.replyingTo = {
     id: props.message.id,
     senderId: props.message.senderId,
-    content: props.message.content,
+    content: props.message.content.slice(0, 150),
+    type: props.message.type,
   };
 };
+
+const replyPreviewText = computed(() => {
+  const reply = props.message.replyTo;
+  if (!reply) return "";
+  if (!reply.senderId && !reply.content) return "Deleted message";
+  if (reply.type === MessageType.image) return "Photo";
+  if (reply.type === MessageType.video) return "Video";
+  if (reply.type === MessageType.audio) return "Voice message";
+  if (reply.type === MessageType.file) return reply.content || "File";
+  const text = stripMentionAddresses(reply.content);
+  return (text.length > 100 ? text.slice(0, 100) + "\u2026" : text) || "...";
+});
 </script>
 
 <template>
@@ -147,7 +164,7 @@ const handleReply = () => {
     <!-- Swipe reply arrow (behind message) -->
     <div
       v-if="swipeOffsetX > 0"
-      class="absolute left-0 top-1/2 flex h-8 w-8 -translate-x-10 -translate-y-1/2 items-center justify-center rounded-full bg-color-bg-ac text-white"
+      class="absolute right-0 top-1/2 flex h-8 w-8 translate-x-10 -translate-y-1/2 items-center justify-center rounded-full bg-color-bg-ac text-white"
       :style="{ opacity: swipeArrowOpacity }"
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -169,16 +186,16 @@ const handleReply = () => {
     </div>
 
     <!-- Avatar slot -->
-    <div v-if="!chatStore.selectionMode && !props.isOwn && props.showAvatar" class="shrink-0 self-end">
+    <div v-if="!chatStore.selectionMode && !props.isOwn && props.showAvatar && themeStore.showAvatarsInChat" class="shrink-0 self-end">
       <slot name="avatar" />
     </div>
-    <div v-else-if="!chatStore.selectionMode && !props.isOwn" class="w-8 shrink-0" />
+    <div v-else-if="!chatStore.selectionMode && !props.isOwn && themeStore.showAvatarsInChat" class="w-8 shrink-0" />
 
     <!-- Bubble container -->
-    <div class="relative min-w-0 max-w-[70%]">
+    <div class="relative min-w-0 max-w-[70%] overflow-hidden">
       <!-- Reply action (on hover) -->
       <button
-        class="absolute -left-8 top-1/2 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-text-on-main-bg-color opacity-0 transition-opacity hover:bg-neutral-grad-0 group-hover:flex group-hover:opacity-100"
+        class="absolute top-1/2 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-text-on-main-bg-color opacity-0 transition-opacity hover:bg-neutral-grad-0 group-hover:flex group-hover:opacity-100"
         :class="props.isOwn ? '-left-8' : '-right-8'"
         title="Reply"
         @click="handleReply"
@@ -192,9 +209,28 @@ const handleReply = () => {
       <!-- Image message -->
       <div
         v-if="message.type === MessageType.image && hasFileInfo"
-        class="overflow-hidden rounded-2xl"
-        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other']"
+        class="overflow-hidden rounded-bubble"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other', (message.replyTo || message.forwardedFrom) ? 'min-w-[180px]' : '']"
       >
+        <!-- Forwarded indicator -->
+        <div v-if="message.forwardedFrom" class="truncate px-3 pt-1.5 text-[11px] italic text-color-bg-ac">
+          Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
+        </div>
+        <!-- Reply preview -->
+        <div
+          v-if="message.replyTo"
+          class="mx-2 mt-1.5 flex cursor-pointer items-start gap-1.5 overflow-hidden rounded-lg px-2 py-1"
+          :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
+          @click.stop="emit('scrollToReply', message.replyTo.id)"
+        >
+          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+              {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
+            </div>
+            <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
+          </div>
+        </div>
         <div class="relative cursor-pointer" @click="handleMediaClick">
           <div v-if="fileState.loading" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0">
             <div class="h-8 w-8 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
@@ -203,7 +239,7 @@ const handleReply = () => {
             Failed to load image
           </div>
           <img v-else-if="fileState.objectUrl" :src="fileState.objectUrl" :alt="message.fileInfo?.name" class="block max-h-[360px] max-w-full object-cover" loading="lazy" />
-          <div class="absolute bottom-1 right-2 flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5">
+          <div v-if="themeStore.showTimestamps" class="absolute bottom-1 right-2 flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5">
             <span class="text-[10px] text-white/90">{{ time }}</span>
             <span v-if="props.isOwn" class="text-[10px] text-white/90">{{ statusIcon }}</span>
           </div>
@@ -226,9 +262,28 @@ const handleReply = () => {
       <!-- Video message -->
       <div
         v-else-if="message.type === MessageType.video && hasFileInfo"
-        class="overflow-hidden rounded-2xl"
-        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other']"
+        class="overflow-hidden rounded-bubble"
+        :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other', (message.replyTo || message.forwardedFrom) ? 'min-w-[180px]' : '']"
       >
+        <!-- Forwarded indicator -->
+        <div v-if="message.forwardedFrom" class="truncate px-3 pt-1.5 text-[11px] italic text-color-bg-ac">
+          Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
+        </div>
+        <!-- Reply preview -->
+        <div
+          v-if="message.replyTo"
+          class="mx-2 mt-1.5 flex cursor-pointer items-start gap-1.5 overflow-hidden rounded-lg px-2 py-1"
+          :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
+          @click.stop="emit('scrollToReply', message.replyTo.id)"
+        >
+          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+              {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
+            </div>
+            <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
+          </div>
+        </div>
         <div class="relative">
           <video v-if="fileState.objectUrl" :src="fileState.objectUrl" controls class="block max-h-[360px] max-w-full" preload="metadata" />
           <div v-else-if="fileState.loading" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0">
@@ -240,7 +295,7 @@ const handleReply = () => {
         </div>
         <div class="flex items-center justify-between px-3 py-1.5">
           <span class="truncate text-xs" :class="props.isOwn ? 'text-white/70' : 'text-text-on-main-bg-color'">{{ message.fileInfo?.name }}</span>
-          <div class="flex items-center gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
+          <div v-if="themeStore.showTimestamps" class="flex items-center gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
             <span class="text-[10px]">{{ time }}</span>
             <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
           </div>
@@ -250,10 +305,29 @@ const handleReply = () => {
       <!-- Audio message -->
       <div
         v-else-if="message.type === MessageType.audio && hasFileInfo"
-        class="rounded-2xl px-3 py-2"
+        class="rounded-bubble px-3 py-2"
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
-        <audio v-if="fileState.objectUrl" :src="fileState.objectUrl" controls class="h-10 w-full min-w-[200px]" />
+        <!-- Forwarded indicator -->
+        <div v-if="message.forwardedFrom" class="mb-1 truncate text-[11px] italic text-color-bg-ac">
+          Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
+        </div>
+        <!-- Reply preview -->
+        <div
+          v-if="message.replyTo"
+          class="mb-1 flex cursor-pointer items-start gap-1.5 overflow-hidden rounded-lg px-2 py-1"
+          :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
+          @click.stop="emit('scrollToReply', message.replyTo.id)"
+        >
+          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+              {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
+            </div>
+            <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
+          </div>
+        </div>
+        <audio v-if="fileState.objectUrl" :src="fileState.objectUrl" controls class="h-10 w-full max-w-full min-w-0" />
         <button v-else-if="!fileState.loading" class="flex items-center gap-2 text-sm hover:underline" @click="handleVideoAudioLoad">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3" /></svg>
           {{ message.fileInfo?.name }}
@@ -262,7 +336,7 @@ const handleReply = () => {
           <div class="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
           <span class="text-xs">Loading...</span>
         </div>
-        <div class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
+        <div v-if="themeStore.showTimestamps" class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
           <span class="text-[10px]">{{ time }}</span>
           <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
         </div>
@@ -271,9 +345,28 @@ const handleReply = () => {
       <!-- File message -->
       <div
         v-else-if="isFile && hasFileInfo"
-        class="rounded-2xl px-3 py-2"
+        class="rounded-bubble px-3 py-2"
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
+        <!-- Forwarded indicator -->
+        <div v-if="message.forwardedFrom" class="mb-1 truncate text-[11px] italic text-color-bg-ac">
+          Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
+        </div>
+        <!-- Reply preview -->
+        <div
+          v-if="message.replyTo"
+          class="mb-1 flex cursor-pointer items-start gap-1.5 overflow-hidden rounded-lg px-2 py-1"
+          :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
+          @click.stop="emit('scrollToReply', message.replyTo.id)"
+        >
+          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+              {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
+            </div>
+            <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
+          </div>
+        </div>
         <button class="flex w-full items-center gap-3 text-left" @click="handleFileDownload">
           <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg" :class="props.isOwn ? 'bg-white/20' : 'bg-color-bg-ac/10'">
             <svg v-if="fileState.loading" class="h-5 w-5 animate-spin" :class="props.isOwn ? 'text-white' : 'text-color-bg-ac'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" /></svg>
@@ -293,7 +386,7 @@ const handleReply = () => {
           </svg>
         </button>
         <p v-if="fileState.error" class="mt-1 text-xs text-color-bad">{{ fileState.error }}</p>
-        <div class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
+        <div v-if="themeStore.showTimestamps" class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
           <span class="text-[10px]">{{ time }}</span>
           <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
         </div>
@@ -302,7 +395,7 @@ const handleReply = () => {
       <!-- Text message (default) -->
       <div
         v-else
-        class="rounded-2xl px-3 py-1.5"
+        class="rounded-bubble px-3 py-1.5"
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
         <!-- Sender name in groups -->
@@ -316,27 +409,31 @@ const handleReply = () => {
 
         <!-- Forwarded indicator -->
         <div v-if="message.forwardedFrom" class="mb-0.5 truncate text-[11px] italic text-color-bg-ac">
-          Forwarded from {{ chatStore.getDisplayName(message.forwardedFrom.senderName || message.forwardedFrom.senderId) }}
+          Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
         </div>
 
         <!-- Reply preview -->
         <div
           v-if="message.replyTo"
-          class="mb-1 flex items-start gap-1.5 rounded-lg px-2 py-1"
+          class="mb-1 flex cursor-pointer items-start gap-1.5 overflow-hidden rounded-lg px-2 py-1"
           :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
+          @click.stop="emit('scrollToReply', message.replyTo.id)"
         >
-          <div class="h-full w-0.5 shrink-0 rounded-full bg-color-bg-ac" />
-          <div class="min-w-0">
-            <div class="truncate text-[11px] font-medium text-color-bg-ac">{{ chatStore.getDisplayName(message.replyTo.senderId) }}</div>
-            <div class="truncate text-[11px] opacity-70">{{ message.replyTo.content }}</div>
+          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+              {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
+            </div>
+            <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
           </div>
         </div>
 
         <!-- Message content with parsed links/mentions -->
-        <div class="text-sm">
+        <div class="text-chat-base">
           <MessageContent :text="props.message.content" />
           <!-- Inline timestamp (Telegram-style float) -->
           <span
+            v-if="themeStore.showTimestamps"
             class="relative -bottom-[3px] ml-2 inline-flex items-center gap-0.5 whitespace-nowrap align-bottom text-[10px]"
             :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
           >

@@ -1,5 +1,6 @@
 import { isSystemDarkMode, setThemeHtml } from "@/entities/theme/lib";
 import { Theme } from "@/entities/theme/model/types";
+import type { FontSize, MessageDensity, BubbleCorners } from "@/entities/theme/model/types";
 import { useLocalStorage } from "@/shared/lib/browser";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
@@ -18,7 +19,27 @@ const ACCENT_COLORS = [
 
 export { ACCENT_COLORS };
 
+export const FONT_SIZE_MAP: Record<FontSize, string> = {
+  small: "13px",
+  default: "14px",
+  large: "16px",
+  xlarge: "18px",
+};
+
+export const DENSITY_MAP: Record<MessageDensity, string> = {
+  compact: "2px",
+  default: "8px",
+  comfortable: "14px",
+};
+
+export const BUBBLE_RADIUS_MAP: Record<BubbleCorners, { main: string; small: string }> = {
+  sharp: { main: "4px", small: "2px" },
+  default: { main: "16px", small: "4px" },
+  round: { main: "24px", small: "8px" },
+};
+
 export const useThemeStore = defineStore(NAMESPACE, () => {
+  // --- Core theme & accent ---
   const { setLSValue: setLSTheme, value: lsTheme } =
     useLocalStorage<Theme>(NAMESPACE);
 
@@ -49,18 +70,163 @@ export const useThemeStore = defineStore(NAMESPACE, () => {
   };
 
   const applyAccentColor = (color: string) => {
-    document.documentElement.style.setProperty("--color-bg-ac", color);
-    // Parse hex to RGB for alpha variants
     const r = parseInt(color.slice(1, 3), 16);
     const g = parseInt(color.slice(3, 5), 16);
     const b = parseInt(color.slice(5, 7), 16);
+    const rgb = `${r} ${g} ${b}`;
+    // Fix: set --color-bg-ac to RGB triplet (not hex) so Tailwind's rgb() wrapper works
+    document.documentElement.style.setProperty("--color-bg-ac", rgb);
     document.documentElement.style.setProperty("--color-bg-ac-rgb", `${r} ${g} ${b}`);
+    // Own bubble color follows accent
+    document.documentElement.style.setProperty("--chat-bubble-own", rgb);
   };
 
+  // --- Font size ---
+  const { setLSValue: setLSFontSize, value: lsFontSize } =
+    useLocalStorage<FontSize>("font_size");
+  const fontSize = ref<FontSize>(lsFontSize || "default");
+
+  const setFontSize = (size: FontSize) => {
+    fontSize.value = size;
+    setLSFontSize(size);
+    applyCSSVar("--font-size-base", FONT_SIZE_MAP[size]);
+  };
+
+  // --- Message density ---
+  const { setLSValue: setLSDensity, value: lsDensity } =
+    useLocalStorage<MessageDensity>("message_density");
+  const messageDensity = ref<MessageDensity>(lsDensity || "default");
+
+  const setMessageDensity = (density: MessageDensity) => {
+    messageDensity.value = density;
+    setLSDensity(density);
+    applyCSSVar("--message-spacing", DENSITY_MAP[density]);
+  };
+
+  // --- Bubble corners ---
+  const { setLSValue: setLSBubbleCorners, value: lsBubbleCorners } =
+    useLocalStorage<BubbleCorners>("bubble_corners");
+  const bubbleCorners = ref<BubbleCorners>(lsBubbleCorners || "default");
+
+  const setBubbleCorners = (corners: BubbleCorners) => {
+    bubbleCorners.value = corners;
+    setLSBubbleCorners(corners);
+    const radii = BUBBLE_RADIUS_MAP[corners];
+    applyCSSVar("--bubble-radius", radii.main);
+    applyCSSVar("--bubble-radius-small", radii.small);
+  };
+
+  // --- Show avatars ---
+  const { setLSValue: setLSShowAvatars, value: lsShowAvatars } =
+    useLocalStorage<boolean>("show_avatars");
+  const showAvatarsInChat = ref(lsShowAvatars ?? true);
+
+  const setShowAvatarsInChat = (v: boolean) => {
+    showAvatarsInChat.value = v;
+    setLSShowAvatars(v);
+  };
+
+  // --- Animations ---
+  const { setLSValue: setLSAnimations, value: lsAnimations } =
+    useLocalStorage<boolean>("animations");
+  const animationsEnabled = ref(lsAnimations ?? true);
+
+  const setAnimationsEnabled = (v: boolean) => {
+    animationsEnabled.value = v;
+    setLSAnimations(v);
+  };
+
+  // --- Chat wallpaper ---
+  const { setLSValue: setLSWallpaper, value: lsWallpaper } =
+    useLocalStorage<string>("chat_wallpaper");
+  const chatWallpaper = ref(lsWallpaper || "");
+
+  const setChatWallpaper = (value: string) => {
+    chatWallpaper.value = value;
+    setLSWallpaper(value);
+  };
+
+  // --- Show timestamps ---
+  const { setLSValue: setLSTimestamps, value: lsTimestamps } =
+    useLocalStorage<boolean>("show_timestamps");
+  const showTimestamps = ref(lsTimestamps ?? true);
+
+  const setShowTimestamps = (v: boolean) => {
+    showTimestamps.value = v;
+    setLSTimestamps(v);
+  };
+
+  // --- Message grouping ---
+  const { setLSValue: setLSGrouping, value: lsGrouping } =
+    useLocalStorage<boolean>("message_grouping");
+  const messageGrouping = ref(lsGrouping ?? true);
+
+  const setMessageGrouping = (v: boolean) => {
+    messageGrouping.value = v;
+    setLSGrouping(v);
+  };
+
+  // --- CSS var helper ---
+  const applyCSSVar = (name: string, value: string) => {
+    document.documentElement.style.setProperty(name, value);
+  };
+
+  // --- Apply all settings to CSS vars ---
+  const applyAllSettings = () => {
+    applyCSSVar("--font-size-base", FONT_SIZE_MAP[fontSize.value]);
+    applyCSSVar("--message-spacing", DENSITY_MAP[messageDensity.value]);
+    const radii = BUBBLE_RADIUS_MAP[bubbleCorners.value];
+    applyCSSVar("--bubble-radius", radii.main);
+    applyCSSVar("--bubble-radius-small", radii.small);
+  };
+
+  // --- Reset to defaults ---
+  const resetToDefaults = () => {
+    setTheme(isSystemDarkMode() ? Theme.dark : Theme.light);
+    setAccentColor(ACCENT_COLORS[0].value);
+    setFontSize("default");
+    setMessageDensity("default");
+    setBubbleCorners("default");
+    setShowAvatarsInChat(true);
+    setAnimationsEnabled(true);
+    setChatWallpaper("");
+    setShowTimestamps(true);
+    setMessageGrouping(true);
+  };
+
+  // --- Init ---
   const initTheme = () => {
     setTheme(isDarkMode.value ? Theme.dark : Theme.light);
     if (accentColor.value) applyAccentColor(accentColor.value);
+    applyAllSettings();
   };
 
-  return { accentColor, initTheme, isDarkMode, setAccentColor, setTheme, theme, toggleTheme };
+  return {
+    // Core
+    accentColor,
+    initTheme,
+    isDarkMode,
+    setAccentColor,
+    setTheme,
+    theme,
+    toggleTheme,
+    // New settings
+    fontSize,
+    setFontSize,
+    messageDensity,
+    setMessageDensity,
+    bubbleCorners,
+    setBubbleCorners,
+    showAvatarsInChat,
+    setShowAvatarsInChat,
+    animationsEnabled,
+    setAnimationsEnabled,
+    chatWallpaper,
+    setChatWallpaper,
+    showTimestamps,
+    setShowTimestamps,
+    messageGrouping,
+    setMessageGrouping,
+    resetToDefaults,
+  };
 });

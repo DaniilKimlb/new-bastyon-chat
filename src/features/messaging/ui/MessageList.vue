@@ -2,6 +2,7 @@
 import { ref, watch, onMounted, nextTick, onUnmounted } from "vue";
 import { useChatStore } from "@/entities/chat";
 import { useAuthStore } from "@/entities/auth";
+import { useThemeStore } from "@/entities/theme";
 import { isConsecutiveMessage } from "@/entities/chat/lib/message-utils";
 import { formatDate } from "@/shared/lib/format";
 import { UserAvatar } from "@/entities/user";
@@ -15,6 +16,7 @@ import MediaViewer from "./MediaViewer.vue";
 
 const chatStore = useChatStore();
 const authStore = useAuthStore();
+const themeStore = useThemeStore();
 const { loadMessages, toggleReaction, deleteMessage } = useMessages();
 const { toast } = useToast();
 
@@ -53,7 +55,7 @@ const closeContextMenu = () => {
 const handleContextAction = (action: string, message: import("@/entities/chat").Message) => {
   switch (action) {
     case "reply":
-      chatStore.replyingTo = { id: message.id, senderId: message.senderId, content: message.content };
+      chatStore.replyingTo = { id: message.id, senderId: message.senderId, content: message.content.slice(0, 150), type: message.type };
       break;
     case "copy":
       navigator.clipboard.writeText(message.content).then(() => toast("Copied to clipboard"));
@@ -206,7 +208,7 @@ defineExpose({ scrollToMessage });
 </script>
 
 <template>
-  <div ref="listRef" class="relative flex-1 overflow-y-auto px-4 py-3">
+  <div ref="listRef" class="relative flex-1 overflow-y-auto px-4 py-3" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
     <!-- Loading state -->
     <MessageSkeleton v-if="loading" />
 
@@ -222,7 +224,7 @@ defineExpose({ scrollToMessage });
     </div>
 
     <!-- Messages -->
-    <TransitionGroup v-else name="msg" tag="div">
+    <TransitionGroup v-else :name="themeStore.animationsEnabled ? 'msg' : ''" tag="div">
       <template
         v-for="(message, index) in chatStore.activeMessages"
         :key="message.id"
@@ -242,12 +244,13 @@ defineExpose({ scrollToMessage });
           :message="message"
           :is-own="message.senderId === authStore.address"
           :is-group="isGroup"
-          :show-avatar="!isConsecutiveMessage(message, chatStore.activeMessages[index + 1])"
-          :is-first-in-group="!isConsecutiveMessage(chatStore.activeMessages[index - 1], message)"
-          :class="isConsecutiveMessage(chatStore.activeMessages[index - 1], message) ? 'mt-0.5' : 'mt-2 first:mt-0'"
+          :show-avatar="themeStore.messageGrouping ? !isConsecutiveMessage(message, chatStore.activeMessages[index + 1]) : true"
+          :is-first-in-group="themeStore.messageGrouping ? !isConsecutiveMessage(chatStore.activeMessages[index - 1], message) : true"
+          :style="index > 0 ? { marginTop: 'var(--message-spacing)' } : {}"
           :data-message-id="message.id"
           @contextmenu="openContextMenu"
-          @reply="(msg) => { chatStore.replyingTo = { id: msg.id, senderId: msg.senderId, content: msg.content }; }"
+          @reply="(msg) => { chatStore.replyingTo = { id: msg.id, senderId: msg.senderId, content: msg.content.slice(0, 150), type: msg.type }; }"
+          @scroll-to-reply="scrollToMessage"
           @open-media="handleOpenMedia"
         >
           <template #avatar>
