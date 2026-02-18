@@ -14,10 +14,15 @@ const activeFilter = ref<"all" | "personal" | "groups">("all");
 const roomsLoading = ref(true);
 
 // Hide skeleton once rooms appear or after 3s max
-const stopWatch = watch(() => chatStore.sortedRooms.length, (len) => {
-  if (len > 0) { roomsLoading.value = false; stopWatch(); }
+let stopWatch: ReturnType<typeof watch> | undefined;
+const cancelLoading = () => {
+  roomsLoading.value = false;
+  stopWatch?.();
+};
+stopWatch = watch(() => chatStore.sortedRooms.length, (len) => {
+  if (len > 0) cancelLoading();
 }, { immediate: true });
-setTimeout(() => { roomsLoading.value = false; stopWatch(); }, 3000);
+setTimeout(cancelLoading, 3000);
 
 const handleSelectRoom = () => {
   searchOpen.value = false;

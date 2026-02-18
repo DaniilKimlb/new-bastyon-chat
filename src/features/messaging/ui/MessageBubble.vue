@@ -213,7 +213,8 @@ const replyPreviewText = computed(() => {
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other', (message.replyTo || message.forwardedFrom) ? 'min-w-[180px]' : '']"
       >
         <!-- Forwarded indicator -->
-        <div v-if="message.forwardedFrom" class="truncate px-3 pt-1.5 text-[11px] italic text-color-bg-ac">
+        <div v-if="message.forwardedFrom" class="truncate px-3 pt-1.5 text-[11px] italic"
+          :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
           Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
         </div>
         <!-- Reply preview -->
@@ -223,9 +224,11 @@ const replyPreviewText = computed(() => {
           :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
           @click.stop="emit('scrollToReply', message.replyTo.id)"
         >
-          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="w-0.5 shrink-0 self-stretch rounded-full"
+            :class="props.isOwn ? 'bg-white/70' : 'bg-color-bg-ac'" />
           <div class="min-w-0 flex-1">
-            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+            <div class="truncate text-[11px] font-medium"
+              :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
               {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
             </div>
             <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
@@ -266,7 +269,8 @@ const replyPreviewText = computed(() => {
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own' : 'bg-chat-bubble-other', (message.replyTo || message.forwardedFrom) ? 'min-w-[180px]' : '']"
       >
         <!-- Forwarded indicator -->
-        <div v-if="message.forwardedFrom" class="truncate px-3 pt-1.5 text-[11px] italic text-color-bg-ac">
+        <div v-if="message.forwardedFrom" class="truncate px-3 pt-1.5 text-[11px] italic"
+          :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
           Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
         </div>
         <!-- Reply preview -->
@@ -276,9 +280,11 @@ const replyPreviewText = computed(() => {
           :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
           @click.stop="emit('scrollToReply', message.replyTo.id)"
         >
-          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="w-0.5 shrink-0 self-stretch rounded-full"
+            :class="props.isOwn ? 'bg-white/70' : 'bg-color-bg-ac'" />
           <div class="min-w-0 flex-1">
-            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+            <div class="truncate text-[11px] font-medium"
+              :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
               {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
             </div>
             <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
@@ -309,7 +315,8 @@ const replyPreviewText = computed(() => {
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
         <!-- Forwarded indicator -->
-        <div v-if="message.forwardedFrom" class="mb-1 truncate text-[11px] italic text-color-bg-ac">
+        <div v-if="message.forwardedFrom" class="mb-1 truncate text-[11px] italic"
+          :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
           Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
         </div>
         <!-- Reply preview -->
@@ -319,9 +326,11 @@ const replyPreviewText = computed(() => {
           :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
           @click.stop="emit('scrollToReply', message.replyTo.id)"
         >
-          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="w-0.5 shrink-0 self-stretch rounded-full"
+            :class="props.isOwn ? 'bg-white/70' : 'bg-color-bg-ac'" />
           <div class="min-w-0 flex-1">
-            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+            <div class="truncate text-[11px] font-medium"
+              :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
               {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
             </div>
             <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
@@ -349,7 +358,8 @@ const replyPreviewText = computed(() => {
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
         <!-- Forwarded indicator -->
-        <div v-if="message.forwardedFrom" class="mb-1 truncate text-[11px] italic text-color-bg-ac">
+        <div v-if="message.forwardedFrom" class="mb-1 truncate text-[11px] italic"
+          :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
           Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
         </div>
         <!-- Reply preview -->
@@ -359,9 +369,11 @@ const replyPreviewText = computed(() => {
           :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
           @click.stop="emit('scrollToReply', message.replyTo.id)"
         >
-          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="w-0.5 shrink-0 self-stretch rounded-full"
+            :class="props.isOwn ? 'bg-white/70' : 'bg-color-bg-ac'" />
           <div class="min-w-0 flex-1">
-            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+            <div class="truncate text-[11px] font-medium"
+              :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
               {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
             </div>
             <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
@@ -408,7 +420,8 @@ const replyPreviewText = computed(() => {
         </div>
 
         <!-- Forwarded indicator -->
-        <div v-if="message.forwardedFrom" class="mb-0.5 truncate text-[11px] italic text-color-bg-ac">
+        <div v-if="message.forwardedFrom" class="mb-0.5 truncate text-[11px] italic"
+          :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
           Forwarded from {{ message.forwardedFrom.senderName || chatStore.getDisplayName(message.forwardedFrom.senderId) }}
         </div>
 
@@ -419,9 +432,11 @@ const replyPreviewText = computed(() => {
           :class="props.isOwn ? 'bg-white/10' : 'bg-black/5'"
           @click.stop="emit('scrollToReply', message.replyTo.id)"
         >
-          <div class="w-0.5 shrink-0 self-stretch rounded-full bg-color-bg-ac" />
+          <div class="w-0.5 shrink-0 self-stretch rounded-full"
+            :class="props.isOwn ? 'bg-white/70' : 'bg-color-bg-ac'" />
           <div class="min-w-0 flex-1">
-            <div class="truncate text-[11px] font-medium text-color-bg-ac">
+            <div class="truncate text-[11px] font-medium"
+              :class="props.isOwn ? 'text-white/70' : 'text-color-bg-ac'">
               {{ message.replyTo.senderId ? chatStore.getDisplayName(message.replyTo.senderId) : 'Deleted message' }}
             </div>
             <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
