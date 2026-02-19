@@ -23,12 +23,21 @@ export interface FileInfo {
   /** For images: dimensions */
   w?: number;
   h?: number;
+  /** Duration in seconds (audio/video) */
+  duration?: number;
+  /** RMS waveform data for voice messages (~50 values 0-1) */
+  waveform?: number[];
+  /** Caption text attached to media */
+  caption?: string;
+  /** If true, caption renders above media (Telegram feature) */
+  captionAbove?: boolean;
 }
 
 export interface ReplyTo {
   id: string;
   senderId: string;
   content: string;
+  type?: MessageType;
 }
 
 export interface Message {

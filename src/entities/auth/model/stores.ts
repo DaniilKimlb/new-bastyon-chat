@@ -227,6 +227,12 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
         onMembership: () => {
           chatStore.refreshRooms();
         },
+        onReceipt: (event: unknown, room: unknown) => {
+          chatStore.handleReceiptEvent(event, room);
+        },
+        onRedaction: (event: unknown, room: unknown) => {
+          chatStore.handleRedactionEvent(event, room);
+        },
         onTyping: (_event: unknown, member: unknown) => {
           const m = member as Record<string, unknown>;
           const roomId = (m.roomId as string) ?? "";

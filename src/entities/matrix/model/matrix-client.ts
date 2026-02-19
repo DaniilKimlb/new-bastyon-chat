@@ -22,6 +22,8 @@ export type SyncCallback = () => void;
 export type TimelineCallback = (event: unknown, room: unknown) => void;
 export type MembershipCallback = (event: unknown, member: unknown) => void;
 export type TypingCallback = (event: unknown, member: unknown) => void;
+export type ReceiptCallback = (event: unknown, room: unknown) => void;
+export type RedactionCallback = (event: unknown, room: unknown) => void;
 
 export class MatrixClientService {
   private baseUrl: string;
@@ -33,12 +35,15 @@ export class MatrixClientService {
   private db: ChatStorageInstance | null = null;
   private sdk = sdk;
   store: Record<string, unknown> | null = null;
+  private typingTimers = new Map<string, number>();
 
   // Event callbacks
   private onSync: SyncCallback | null = null;
   private onTimeline: TimelineCallback | null = null;
   private onMembership: MembershipCallback | null = null;
   private onTyping: TypingCallback | null = null;
+  private onReceipt: ReceiptCallback | null = null;
+  private onRedaction: RedactionCallback | null = null;
 
   constructor(domain?: string) {
     this.baseUrl = `https://${domain ?? MATRIX_SERVER}`;
@@ -54,11 +59,15 @@ export class MatrixClientService {
     onTimeline?: TimelineCallback;
     onMembership?: MembershipCallback;
     onTyping?: TypingCallback;
+    onReceipt?: ReceiptCallback;
+    onRedaction?: RedactionCallback;
   }) {
     if (handlers.onSync) this.onSync = handlers.onSync;
     if (handlers.onTimeline) this.onTimeline = handlers.onTimeline;
     if (handlers.onMembership) this.onMembership = handlers.onMembership;
     if (handlers.onTyping) this.onTyping = handlers.onTyping;
+    if (handlers.onReceipt) this.onReceipt = handlers.onReceipt;
+    if (handlers.onRedaction) this.onRedaction = handlers.onRedaction;
   }
 
   /** Custom request function using axios (matching bastyon-chat pattern) */
@@ -225,6 +234,51 @@ export class MatrixClientService {
       this.onTyping?.(event, member);
     });
 
+    // Listen for sendToDevice typing events (workaround for broken /typing endpoint)
+    this.client.on("toDeviceEvent", (event: unknown) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ev = event as any;
+      if (ev?.getType?.() !== MatrixClientService.TYPING_EVENT_TYPE) return;
+      const content = ev.getContent?.() ?? {};
+      const roomId = content.room_id as string;
+      const isTyping = content.typing as boolean;
+      const senderId = ev.getSender?.() as string;
+      if (!roomId || !senderId || senderId === userId) return;
+
+      // Build a member-like object matching what onTyping expects
+      const member = { roomId, userId: senderId, typing: isTyping };
+      this.onTyping?.(event, member);
+
+      // Auto-clear typing after 5s if no "stop typing" received
+      if (isTyping) {
+        const key = `${roomId}:${senderId}`;
+        if (this.typingTimers.has(key)) {
+          clearTimeout(this.typingTimers.get(key)!);
+        }
+        this.typingTimers.set(key, window.setTimeout(() => {
+          this.typingTimers.delete(key);
+          const fakeMember = { roomId, userId: senderId, typing: false };
+          this.onTyping?.(null, fakeMember);
+        }, 5000));
+      } else {
+        const key = `${roomId}:${senderId}`;
+        if (this.typingTimers.has(key)) {
+          clearTimeout(this.typingTimers.get(key)!);
+          this.typingTimers.delete(key);
+        }
+      }
+    });
+
+    this.client.on("Room.receipt", (event: unknown, room: unknown) => {
+      if (!this.chatsReady) return;
+      this.onReceipt?.(event, room);
+    });
+
+    this.client.on("Room.redaction", (event: unknown, room: unknown) => {
+      if (!this.chatsReady) return;
+      this.onRedaction?.(event, room);
+    });
+
     this.client.on("sync", (state: string) => {
       console.log("[matrix-client] sync state:", state);
       if (state === "PREPARED" || state === "SYNCING") {
@@ -264,23 +318,30 @@ export class MatrixClientService {
     return this.chatsReady;
   }
 
-  /** Send text message */
-  async sendText(roomId: string, text: string): Promise<unknown> {
+  /** Send text message. Returns server event_id. */
+  async sendText(roomId: string, text: string): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
     const content = sdk.ContentHelpers.makeTextMessage(text);
-    return this.client.sendMessage(roomId, content);
+    const res = await this.client.sendMessage(roomId, content);
+    return (res as { event_id: string }).event_id;
   }
 
-  /** Send encrypted text message */
-  async sendEncryptedText(roomId: string, content: Record<string, unknown>): Promise<unknown> {
+  /** Send encrypted text message. Returns server event_id. */
+  async sendEncryptedText(roomId: string, content: Record<string, unknown>): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
-    return this.client.sendEvent(roomId, "m.room.message", content);
+    const res = await this.client.sendEvent(roomId, "m.room.message", content);
+    return (res as { event_id: string }).event_id;
   }
 
-  /** Upload content to Matrix server */
-  async uploadContent(file: Blob): Promise<string> {
+  /** Upload content to Matrix server.
+   *  @param progressHandler — optional callback receiving { loaded, total } */
+  async uploadContent(file: Blob, progressHandler?: (progress: { loaded: number; total: number }) => void): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
-    const src = await this.client.uploadContent(file);
+    const opts: Record<string, unknown> = {};
+    if (progressHandler) {
+      opts.progressHandler = progressHandler;
+    }
+    const src = await this.client.uploadContent(file, opts);
     return this.client.mxcUrlToHttp(src.content_uri);
   }
 
@@ -335,12 +396,23 @@ export class MatrixClientService {
     return getmatrixid(userId) === getmatrixid(this.getUserId() ?? "");
   }
 
-  /** Send read receipt */
+  /** Mark messages as read using /read_markers endpoint (same as old bastyon-chat).
+   *  The /receipt/ endpoint returns 500 on this server, but /read_markers works. */
   async sendReadReceipt(event: unknown): Promise<void> {
     if (!this.client) return;
     try {
-      await this.client.sendReadReceipt(event);
-    } catch { /* ignore */ }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ev = event as any;
+      const roomId: string = ev.getRoomId?.() ?? ev.event?.room_id;
+      const eventId: string = ev.getId?.() ?? ev.event?.event_id;
+      if (!roomId || !eventId) return;
+
+      // Use setRoomReadMarkers — same approach as old bastyon-chat (list/index.js:666)
+      // This uses POST /rooms/{roomId}/read_markers instead of /receipt/
+      await this.client.setRoomReadMarkers(roomId, eventId, ev);
+    } catch (e) {
+      console.warn("[matrix-client] sendReadReceipt error:", e);
+    }
   }
 
   /** Load older messages for a room (scrollback/pagination) */
@@ -355,30 +427,66 @@ export class MatrixClientService {
     }
   }
 
-  /** Send a reaction to an event */
-  async sendReaction(roomId: string, eventId: string, emoji: string): Promise<unknown> {
+  /** Send a reaction to an event. Returns the server-assigned event ID. */
+  async sendReaction(roomId: string, eventId: string, emoji: string): Promise<string> {
     if (!this.client) throw new Error("Client not initialized");
-    return this.client.sendEvent(roomId, "m.reaction", {
+    const res = await this.client.sendEvent(roomId, "m.reaction", {
       "m.relates_to": {
         rel_type: "m.annotation",
         event_id: eventId,
         key: emoji,
       },
     });
+    return (res as { event_id: string }).event_id;
   }
 
-  /** Redact (delete) an event */
+  /** Redact (delete) an event — calls SDK HTTP layer directly with /redact/ endpoint */
   async redactEvent(roomId: string, eventId: string, reason?: string): Promise<unknown> {
     if (!this.client) throw new Error("Client not initialized");
-    return this.client.redactEvent(roomId, eventId, undefined, reason ? { reason } : undefined);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = this.client as any;
+    const txnId = `m${Date.now()}.${Math.floor(Math.random() * 100)}`;
+    const encodedRoomId = encodeURIComponent(roomId);
+    const encodedEventId = encodeURIComponent(eventId);
+    const path = `/rooms/${encodedRoomId}/redact/${encodedEventId}/${txnId}`;
+    const body = reason ? { reason } : {};
+    return client.http.authedRequest("PUT", path, undefined, body);
   }
 
-  /** Set typing indicator */
-  async setTyping(roomId: string, isTyping: boolean, timeout = 20000): Promise<void> {
+  /** Custom typing event type for sendToDevice fallback */
+  private static TYPING_EVENT_TYPE = "com.bastyon.typing";
+
+  /** Set typing indicator via sendToDevice (bypasses broken /typing endpoint).
+   *  Sends typing state directly to other room members' devices. */
+  async setTyping(roomId: string, isTyping: boolean): Promise<void> {
     if (!this.client) return;
     try {
-      await this.client.sendTyping(roomId, isTyping, timeout);
-    } catch { /* ignore */ }
+      const myUserId = this.getUserId();
+      if (!myUserId) return;
+
+      const room = this.client.getRoom(roomId);
+      if (!room) return;
+
+      // Get joined members, exclude self
+      const members: unknown[] = room.getJoinedMembers?.() ?? [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const otherMembers = members.filter((m: any) => m.userId !== myUserId);
+      if (otherMembers.length === 0) return;
+
+      // Build contentMap: Map<userId, Map<deviceId, content>>
+      const contentMap = new Map<string, Map<string, Record<string, unknown>>>();
+      for (const member of otherMembers) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const userId = (member as any).userId as string;
+        const deviceMap = new Map<string, Record<string, unknown>>();
+        deviceMap.set("*", { room_id: roomId, typing: isTyping });
+        contentMap.set(userId, deviceMap);
+      }
+
+      await this.client.sendToDevice(MatrixClientService.TYPING_EVENT_TYPE, contentMap);
+    } catch (e) {
+      console.warn("[matrix-client] setTyping (toDevice) error:", e);
+    }
   }
 
   /** Destroy the client */
@@ -386,6 +494,11 @@ export class MatrixClientService {
     if (this.client) {
       this.client.stopClient();
     }
+    // Clear typing timers
+    for (const timer of this.typingTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.typingTimers.clear();
     this.chatsReady = false;
     this.ready = false;
     this.error = false;

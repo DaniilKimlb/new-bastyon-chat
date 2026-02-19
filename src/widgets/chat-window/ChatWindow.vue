@@ -65,7 +65,7 @@ const subtitle = computed(() => {
   const room = chatStore.activeRoom;
   if (!room) return "";
   if (room.isGroup) return `${room.members.length} members`;
-  return "online";
+  return "";
 });
 </script>
 

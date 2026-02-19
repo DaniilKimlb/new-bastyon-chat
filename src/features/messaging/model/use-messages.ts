@@ -8,6 +8,19 @@ export function useMessages() {
   const chatStore = useChatStore();
   const authStore = useAuthStore();
 
+  /** Extract width/height from an image file */
+  const getImageDimensions = (file: File): Promise<{ w: number; h: number }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve({ w: img.naturalWidth, h: img.naturalHeight });
+        URL.revokeObjectURL(img.src);
+      };
+      img.onerror = () => resolve({ w: 0, h: 0 });
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const sendMessage = async (content: string) => {
     const roomId = chatStore.activeRoomId;
     if (!roomId || !content.trim()) return;
@@ -34,16 +47,19 @@ export function useMessages() {
       // Check if room has encryption
       const roomCrypto = authStore.pcrypto?.rooms[roomId] as PcryptoRoomInstance | undefined;
 
+      let serverEventId: string;
       if (roomCrypto?.canBeEncrypt()) {
         // Send encrypted
         const encrypted = await roomCrypto.encryptEvent(trimmed);
-        await matrixService.sendEncryptedText(roomId, encrypted);
+        serverEventId = await matrixService.sendEncryptedText(roomId, encrypted);
       } else {
         // Send plaintext
-        await matrixService.sendText(roomId, trimmed);
+        serverEventId = await matrixService.sendText(roomId, trimmed);
       }
 
-      chatStore.updateMessageStatus(roomId, tempId, MessageStatus.sent);
+      // Replace temp ID with server event_id so read receipts can match
+      if (serverEventId) chatStore.updateMessageId(roomId, tempId, serverEventId);
+      chatStore.updateMessageStatus(roomId, serverEventId || tempId, MessageStatus.sent);
     } catch (e) {
       console.error("Failed to send message:", e);
       chatStore.updateMessageStatus(roomId, tempId, MessageStatus.failed);
@@ -66,6 +82,7 @@ export function useMessages() {
 
     // Optimistic message
     const tempId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const localBlobUrl = URL.createObjectURL(file);
     const message: Message = {
       id: tempId,
       roomId,
@@ -78,7 +95,7 @@ export function useMessages() {
         name: file.name,
         type: file.type,
         size: file.size,
-        url: "",
+        url: localBlobUrl,
       },
     };
     chatStore.addMessage(roomId, message);
@@ -109,14 +126,156 @@ export function useMessages() {
       // Send as m.file event with body = JSON of fileInfo
       // (This is the bastyon-chat format for all file types)
       const body = JSON.stringify(fileInfo);
-      await matrixService.sendEncryptedText(roomId, {
+      const serverEventId = await matrixService.sendEncryptedText(roomId, {
         body,
         msgtype: "m.file",
       });
 
-      chatStore.updateMessageStatus(roomId, tempId, MessageStatus.sent);
+      if (serverEventId) chatStore.updateMessageId(roomId, tempId, serverEventId);
+      chatStore.updateMessageStatus(roomId, serverEventId || tempId, MessageStatus.sent);
     } catch (e) {
       console.error("Failed to send file:", e);
+      chatStore.updateMessageStatus(roomId, tempId, MessageStatus.failed);
+    }
+  };
+
+  /** Send an image message (m.image event — compatible with bastyon-chat) */
+  const sendImage = async (file: File, options: { caption?: string; captionAbove?: boolean } = {}) => {
+    const roomId = chatStore.activeRoomId;
+    if (!roomId || !file) return;
+
+    const matrixService = getMatrixClientService();
+    if (!matrixService.isReady()) return;
+
+    const dimensions = await getImageDimensions(file);
+
+    const tempId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const localBlobUrl = URL.createObjectURL(file);
+    const message: Message = {
+      id: tempId,
+      roomId,
+      senderId: authStore.address ?? "",
+      content: options.caption || file.name,
+      timestamp: Date.now(),
+      status: MessageStatus.sending,
+      type: MessageType.image,
+      fileInfo: {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        url: localBlobUrl,
+        w: dimensions.w,
+        h: dimensions.h,
+        caption: options.caption,
+        captionAbove: options.captionAbove,
+      },
+    };
+    chatStore.addMessage(roomId, message);
+
+    try {
+      const roomCrypto = authStore.pcrypto?.rooms[roomId] as PcryptoRoomInstance | undefined;
+
+      let fileToUpload: Blob = file;
+      let secrets: Record<string, unknown> | undefined;
+
+      if (roomCrypto?.canBeEncrypt()) {
+        const encrypted = await roomCrypto.encryptFile(file);
+        secrets = encrypted.secrets;
+        fileToUpload = encrypted.file;
+      }
+
+      const url = await matrixService.uploadContent(fileToUpload);
+
+      const content: Record<string, unknown> = {
+        body: options.caption || "Image",
+        msgtype: "m.image",
+        url,
+        info: {
+          w: dimensions.w,
+          h: dimensions.h,
+          mimetype: file.type,
+          size: file.size,
+          ...(secrets ? { secrets } : {}),
+          ...(options.caption ? { caption: options.caption } : {}),
+          ...(options.captionAbove != null ? { captionAbove: options.captionAbove } : {}),
+        },
+      };
+
+      const serverEventId = await matrixService.sendEncryptedText(roomId, content);
+      if (serverEventId) chatStore.updateMessageId(roomId, tempId, serverEventId);
+      chatStore.updateMessageStatus(roomId, serverEventId || tempId, MessageStatus.sent);
+    } catch (e) {
+      console.error("Failed to send image:", e);
+      chatStore.updateMessageStatus(roomId, tempId, MessageStatus.failed);
+    }
+  };
+
+  /** Send an audio/voice message (m.audio event — compatible with bastyon-chat) */
+  const sendAudio = async (file: File, options: { duration?: number; waveform?: number[] } = {}) => {
+    const roomId = chatStore.activeRoomId;
+    if (!roomId || !file) return;
+
+    const matrixService = getMatrixClientService();
+    if (!matrixService.isReady()) return;
+
+    const tempId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    // Create a local blob URL so VoiceMessage can play immediately (before upload completes)
+    const localBlobUrl = URL.createObjectURL(file);
+    const message: Message = {
+      id: tempId,
+      roomId,
+      senderId: authStore.address ?? "",
+      content: "Audio",
+      timestamp: Date.now(),
+      status: MessageStatus.sending,
+      type: MessageType.audio,
+      fileInfo: {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        url: localBlobUrl,
+        duration: options.duration,
+        waveform: options.waveform,
+      },
+    };
+    chatStore.addMessage(roomId, message);
+
+    try {
+      const roomCrypto = authStore.pcrypto?.rooms[roomId] as PcryptoRoomInstance | undefined;
+
+      let fileToUpload: Blob = file;
+      let secrets: Record<string, unknown> | undefined;
+
+      if (roomCrypto?.canBeEncrypt()) {
+        const encrypted = await roomCrypto.encryptFile(file);
+        secrets = encrypted.secrets;
+        fileToUpload = encrypted.file;
+      }
+
+      const url = await matrixService.uploadContent(fileToUpload);
+
+      // Matrix server rejects float values — ensure all numbers are integers.
+      // Waveform: convert 0..1 floats to 0..1024 integers (Matrix spec range).
+      const intWaveform = options.waveform?.map((v: number) => Math.round(v * 1024));
+
+      const content: Record<string, unknown> = {
+        body: "Audio",
+        msgtype: "m.audio",
+        url,
+        info: {
+          mimetype: file.type,
+          size: Math.round(file.size),
+          duration: options.duration ? Math.round(options.duration * 1000) : undefined,
+          waveform: intWaveform,
+          ...(secrets ? { secrets } : {}),
+        },
+      };
+
+      const serverEventId = await matrixService.sendEncryptedText(roomId, content);
+      if (serverEventId) chatStore.updateMessageId(roomId, tempId, serverEventId);
+      chatStore.updateMessageStatus(roomId, serverEventId || tempId, MessageStatus.sent);
+    } catch (e) {
+      console.error("Failed to send audio:", e);
       chatStore.updateMessageStatus(roomId, tempId, MessageStatus.failed);
     }
   };
@@ -133,7 +292,10 @@ export function useMessages() {
     matrixService.setTyping(roomId, isTyping);
   };
 
-  /** Toggle a reaction on a message: sends if not reacted, redacts if already reacted */
+  /** Toggle a reaction on a message.
+   *  - One reaction per user: choosing a different emoji replaces the old one.
+   *  - Clicking the same emoji removes it (toggle off).
+   *  - Includes optimistic local update for instant feedback. */
   const toggleReaction = async (messageId: string, emoji: string) => {
     const roomId = chatStore.activeRoomId;
     if (!roomId) return;
@@ -141,21 +303,51 @@ export function useMessages() {
     const matrixService = getMatrixClientService();
     if (!matrixService.isReady()) return;
 
-    // Check if we already reacted with this emoji
     const roomMessages = chatStore.messages[roomId] ?? [];
     const msg = roomMessages.find(m => m.id === messageId);
-    const existing = msg?.reactions?.[emoji];
+    if (!msg) return;
+
+    const myAddress = authStore.address ?? "";
+    const existingSameEmoji = msg.reactions?.[emoji];
+
+    // Find if user already reacted with ANY emoji on this message
+    let existingOtherEmoji: string | undefined;
+    let existingOtherEventId: string | undefined;
+    if (msg.reactions) {
+      for (const [key, data] of Object.entries(msg.reactions)) {
+        if (key !== emoji && data.myEventId) {
+          existingOtherEmoji = key;
+          existingOtherEventId = data.myEventId;
+          break;
+        }
+      }
+    }
+
+    const isServerEventId = (id?: string) => id?.startsWith("$");
 
     try {
-      if (existing?.myEventId) {
-        // Remove reaction by redacting
-        await matrixService.redactEvent(roomId, existing.myEventId);
+      if (existingSameEmoji?.myEventId) {
+        // Toggle off: user clicked the same emoji they already reacted with
+        const reactionEventId = existingSameEmoji.myEventId;
+        if (!isServerEventId(reactionEventId)) return; // still in-flight, ignore
+        chatStore.optimisticRemoveReaction(roomId, messageId, emoji, myAddress);
+        await matrixService.redactEvent(roomId, reactionEventId);
       } else {
-        // Send reaction
-        await matrixService.sendReaction(roomId, messageId, emoji);
+        // Remove previous different-emoji reaction first (one reaction per user)
+        if (existingOtherEmoji && isServerEventId(existingOtherEventId)) {
+          const prevEventId = existingOtherEventId!;
+          chatStore.optimisticRemoveReaction(roomId, messageId, existingOtherEmoji, myAddress);
+          await matrixService.redactEvent(roomId, prevEventId);
+        }
+        // Send new reaction
+        chatStore.optimisticAddReaction(roomId, messageId, emoji, myAddress);
+        const realEventId = await matrixService.sendReaction(roomId, messageId, emoji);
+        // Store the server-assigned event ID so redaction works later
+        chatStore.setReactionEventId(roomId, messageId, emoji, realEventId);
       }
     } catch (e) {
       console.error("Failed to toggle reaction:", e);
+      await chatStore.loadRoomMessages(roomId);
     }
   };
 
@@ -184,6 +376,7 @@ export function useMessages() {
         id: replyTo.id,
         senderId: replyTo.senderId,
         content: replyTo.content,
+        type: replyTo.type,
       },
     };
     chatStore.addMessage(roomId, message);
@@ -202,16 +395,18 @@ export function useMessages() {
         },
       };
 
+      let serverEventId: string;
       if (roomCrypto?.canBeEncrypt()) {
         const encrypted = await roomCrypto.encryptEvent(trimmed);
         // Merge reply relation into encrypted content
         const encContent = { ...encrypted, "m.relates_to": msgContent["m.relates_to"] };
-        await matrixService.sendEncryptedText(roomId, encContent);
+        serverEventId = await matrixService.sendEncryptedText(roomId, encContent);
       } else {
-        await matrixService.sendEncryptedText(roomId, msgContent);
+        serverEventId = await matrixService.sendEncryptedText(roomId, msgContent);
       }
 
-      chatStore.updateMessageStatus(roomId, tempId, MessageStatus.sent);
+      if (serverEventId) chatStore.updateMessageId(roomId, tempId, serverEventId);
+      chatStore.updateMessageStatus(roomId, serverEventId || tempId, MessageStatus.sent);
     } catch (e) {
       console.error("Failed to send reply:", e);
       chatStore.updateMessageStatus(roomId, tempId, MessageStatus.failed);
@@ -289,30 +484,67 @@ export function useMessages() {
     try {
       const roomCrypto = authStore.pcrypto?.rooms[targetRoomId] as PcryptoRoomInstance | undefined;
 
+      const originalForward = message.forwardedFrom;
       const forwardMeta: Record<string, unknown> | undefined = withSenderInfo
-        ? { sender_id: message.senderId, sender_name: message.senderId }
+        ? {
+            sender_id: originalForward?.senderId ?? message.senderId,
+            sender_name: originalForward?.senderName
+              ?? chatStore.getDisplayName(originalForward?.senderId ?? message.senderId),
+          }
         : undefined;
 
-      // Forward file/media messages by re-sending the file info
+      // Forward file/media messages by re-sending in the proper format
       if (message.fileInfo && message.type !== MessageType.text) {
-        const fileBody: Record<string, unknown> = {
-          name: message.fileInfo.name,
-          type: message.fileInfo.type,
-          size: message.fileInfo.size,
-          url: message.fileInfo.url,
-        };
-        if (message.fileInfo.secrets) {
-          fileBody.secrets = message.fileInfo.secrets;
+        const fi = message.fileInfo;
+        let content: Record<string, unknown>;
+
+        if (message.type === MessageType.image) {
+          content = {
+            body: fi.caption || "Image",
+            msgtype: "m.image",
+            url: fi.url,
+            info: {
+              w: fi.w, h: fi.h,
+              mimetype: fi.type, size: fi.size,
+              ...(fi.secrets ? { secrets: fi.secrets } : {}),
+            },
+          };
+        } else if (message.type === MessageType.audio) {
+          content = {
+            body: "Audio",
+            msgtype: "m.audio",
+            url: fi.url,
+            info: {
+              mimetype: fi.type, size: fi.size,
+              duration: fi.duration ? fi.duration * 1000 : undefined,
+              waveform: fi.waveform,
+              ...(fi.secrets ? { secrets: fi.secrets } : {}),
+            },
+          };
+        } else if (message.type === MessageType.video) {
+          content = {
+            body: fi.caption || "Video",
+            msgtype: "m.video",
+            url: fi.url,
+            info: {
+              w: fi.w, h: fi.h,
+              mimetype: fi.type, size: fi.size,
+              duration: fi.duration ? fi.duration * 1000 : undefined,
+              ...(fi.secrets ? { secrets: fi.secrets } : {}),
+            },
+          };
+        } else {
+          // Generic file — send as m.file with JSON body (bastyon-chat compat)
+          const fileBody: Record<string, unknown> = {
+            name: fi.name, type: fi.type, size: fi.size, url: fi.url,
+          };
+          if (fi.secrets) fileBody.secrets = fi.secrets;
+          if (fi.w) fileBody.w = fi.w;
+          if (fi.h) fileBody.h = fi.h;
+          content = { body: JSON.stringify(fileBody), msgtype: "m.file" };
         }
-        if (message.fileInfo.w) fileBody.w = message.fileInfo.w;
-        if (message.fileInfo.h) fileBody.h = message.fileInfo.h;
 
-        const content: Record<string, unknown> = {
-          body: JSON.stringify(fileBody),
-          msgtype: "m.file",
-        };
         if (forwardMeta) content["forwarded_from"] = forwardMeta;
-
         await matrixService.sendEncryptedText(targetRoomId, content);
         return;
       }
@@ -344,7 +576,9 @@ export function useMessages() {
     editMessage,
     forwardMessage,
     loadMessages,
+    sendAudio,
     sendFile,
+    sendImage,
     sendMessage,
     sendReply,
     setTyping,

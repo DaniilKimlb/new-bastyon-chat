@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { ref, nextTick } from "vue";
-import { useChatStore } from "@/entities/chat";
+import { useChatStore, MessageType } from "@/entities/chat";
+import { useThemeStore } from "@/entities/theme";
+import { stripMentionAddresses } from "@/shared/lib/message-format";
 import { useMessages } from "../model/use-messages";
+import { useMediaUpload } from "../model/use-media-upload";
 import EmojiPicker from "./EmojiPicker.vue";
 import AttachmentPanel from "./AttachmentPanel.vue";
+import MediaPreview from "./MediaPreview.vue";
+import VoiceRecorder from "./VoiceRecorder.vue";
+import { useVoiceRecorder } from "../model/use-voice-recorder";
 
 const chatStore = useChatStore();
-const { sendMessage, sendFile, sendReply, editMessage, setTyping } = useMessages();
+const themeStore = useThemeStore();
+const { sendMessage, sendFile, sendImage, sendAudio, sendReply, editMessage, setTyping } = useMessages();
+const mediaUpload = useMediaUpload();
+const voiceRecorder = useVoiceRecorder();
 
 const text = ref("");
 const textareaRef = ref<HTMLTextAreaElement>();
@@ -81,7 +90,17 @@ const handleInput = () => {
 };
 
 const showAttachmentPanel = ref(false);
+const attachBtnRef = ref<HTMLElement>();
+const attachmentPanelPos = ref({ x: 0, y: 0 });
 const photoInputRef = ref<HTMLInputElement>();
+
+const toggleAttachmentPanel = () => {
+  if (attachBtnRef.value) {
+    const rect = attachBtnRef.value.getBoundingClientRect();
+    attachmentPanelPos.value = { x: rect.left + rect.width / 2, y: rect.top };
+  }
+  showAttachmentPanel.value = !showAttachmentPanel.value;
+};
 
 const openFilePicker = () => {
   fileInputRef.value?.click();
@@ -89,6 +108,14 @@ const openFilePicker = () => {
 
 const openPhotoPicker = () => {
   photoInputRef.value?.click();
+};
+
+const handlePhotoSelect = (e: Event) => {
+  const target = e.target as HTMLInputElement;
+  const files = target.files;
+  if (!files?.length) return;
+  mediaUpload.addFiles(files);
+  target.value = "";
 };
 
 const handleFileSelect = async (e: Event) => {
@@ -107,85 +134,61 @@ const handleFileSelect = async (e: Event) => {
   }
 };
 
+const handleMediaSend = async () => {
+  if (mediaUpload.files.value.length === 0) return;
+  mediaUpload.sending.value = true;
+  try {
+    const files = mediaUpload.files.value;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const isLast = i === files.length - 1;
+      const captionOpts = isLast && mediaUpload.caption.value
+        ? { caption: mediaUpload.caption.value, captionAbove: mediaUpload.captionAbove.value }
+        : {};
+
+      if (f.type === "image") {
+        await sendImage(f.file, captionOpts);
+      } else {
+        await sendFile(f.file);
+      }
+    }
+  } finally {
+    mediaUpload.clear();
+  }
+};
+
 const cancelReply = () => {
   chatStore.replyingTo = null;
 };
 
-// Voice recording
-const isRecording = ref(false);
-const recordingDuration = ref(0);
-let mediaRecorder: MediaRecorder | null = null;
-let audioChunks: Blob[] = [];
-let recordingTimer: ReturnType<typeof setInterval> | null = null;
+const replyInputPreviewText = computed(() => {
+  const reply = chatStore.replyingTo;
+  if (!reply) return "";
+  if (reply.type === MessageType.image) return "Photo";
+  if (reply.type === MessageType.video) return "Video";
+  if (reply.type === MessageType.audio) return "Voice message";
+  if (reply.type === MessageType.file) return reply.content || "File";
+  const text = stripMentionAddresses(reply.content);
+  return (text.length > 100 ? text.slice(0, 100) + "\u2026" : text) || "...";
+});
 
-const formatDuration = (seconds: number) => {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-};
-
-const startRecording = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm" });
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      if (audioChunks.length === 0) return;
-      const blob = new Blob(audioChunks, { type: "audio/webm" });
-      const file = new File([blob], `voice_${Date.now()}.webm`, { type: "audio/webm" });
-      sending.value = true;
-      try {
-        await sendFile(file);
-      } finally {
-        sending.value = false;
-      }
-    };
-
-    mediaRecorder.start(100);
-    isRecording.value = true;
-    recordingDuration.value = 0;
-    recordingTimer = setInterval(() => {
-      recordingDuration.value++;
-    }, 1000);
-  } catch (e) {
-    console.error("Failed to start recording:", e);
+// Voice recording handlers
+const handleVoiceSend = async () => {
+  const result = await voiceRecorder.stopAndSend();
+  if (result) {
+    await sendAudio(result.file, { duration: result.duration, waveform: result.waveform });
   }
 };
 
-const stopRecording = () => {
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    mediaRecorder.stop();
-  }
-  isRecording.value = false;
-  if (recordingTimer) {
-    clearInterval(recordingTimer);
-    recordingTimer = null;
-  }
-};
-
-const cancelRecording = () => {
-  audioChunks = [];
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    mediaRecorder.ondataavailable = null;
-    mediaRecorder.onstop = () => {
-      mediaRecorder?.stream?.getTracks().forEach(t => t.stop());
-    };
-    mediaRecorder.stop();
-  }
-  isRecording.value = false;
-  if (recordingTimer) {
-    clearInterval(recordingTimer);
-    recordingTimer = null;
+const handleVoicePreviewSend = async () => {
+  const result = await voiceRecorder.sendPreview();
+  if (result) {
+    await sendAudio(result.file, { duration: result.duration, waveform: result.waveform });
   }
 };
 
 const showEmojiPicker = ref(false);
+const emojiPickerPos = ref({ x: 0, y: 0 });
 
 const insertEmoji = (emoji: string) => {
   const el = textareaRef.value;
@@ -201,104 +204,83 @@ const insertEmoji = (emoji: string) => {
   } else {
     text.value += emoji;
   }
-  showEmojiPicker.value = false;
+  themeStore.addRecentEmoji(emoji);
+  // In input mode, picker stays open — user closes by clicking outside
 };
 </script>
 
 <template>
-  <div class="border-t border-neutral-grad-0 bg-background-total-theme">
+  <div class="overflow-hidden border-t border-neutral-grad-0 bg-background-total-theme">
     <!-- Editing bar -->
-    <div
-      v-if="isEditing"
-      class="flex items-center gap-2 border-b border-neutral-grad-0 px-3 py-2"
-    >
-      <div class="flex h-8 w-8 items-center justify-center text-color-bg-ac">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-        </svg>
-      </div>
-      <div class="min-w-0 flex-1">
-        <div class="text-xs font-medium text-color-bg-ac">Editing</div>
-        <div class="truncate text-xs text-text-on-main-bg-color">{{ chatStore.editingMessage?.content }}</div>
-      </div>
-      <button
-        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color hover:bg-neutral-grad-0"
-        @click="cancelEdit"
+    <transition name="input-bar">
+      <div
+        v-if="isEditing"
+        class="flex items-center gap-2 border-b border-neutral-grad-0 px-3 py-2"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M18 6L6 18" /><path d="M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
+        <div class="flex h-8 w-8 items-center justify-center text-color-bg-ac">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="text-xs font-medium text-color-bg-ac">Editing</div>
+          <div class="truncate text-xs text-text-on-main-bg-color">{{ chatStore.editingMessage?.content }}</div>
+        </div>
+        <button
+          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color hover:bg-neutral-grad-0"
+          @click="cancelEdit"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18" /><path d="M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </transition>
 
     <!-- Reply preview bar -->
-    <div
-      v-else-if="chatStore.replyingTo"
-      class="flex items-center gap-2 border-b border-neutral-grad-0 px-3 py-2"
-    >
-      <div class="h-8 w-0.5 shrink-0 rounded-full bg-color-bg-ac" />
-      <div class="min-w-0 flex-1">
-        <div class="truncate text-xs font-medium text-color-bg-ac">
-          {{ chatStore.replyingTo.senderId }}
+    <transition name="input-bar">
+      <div
+        v-if="!isEditing && chatStore.replyingTo"
+        class="flex items-center gap-2 border-b border-neutral-grad-0 px-3 py-2"
+      >
+        <div class="h-8 w-0.5 shrink-0 rounded-full bg-color-bg-ac" />
+        <div class="min-w-0 flex-1">
+          <div class="truncate text-xs font-medium text-color-bg-ac">
+            {{ chatStore.getDisplayName(chatStore.replyingTo.senderId) }}
+          </div>
+          <div class="truncate text-xs text-text-on-main-bg-color">
+            {{ replyInputPreviewText }}
+          </div>
         </div>
-        <div class="truncate text-xs text-text-on-main-bg-color">
-          {{ chatStore.replyingTo.content }}
-        </div>
+        <button
+          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color hover:bg-neutral-grad-0"
+          @click="cancelReply"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18" /><path d="M6 6l12 12" />
+          </svg>
+        </button>
       </div>
-      <button
-        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color hover:bg-neutral-grad-0"
-        @click="cancelReply"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M18 6L6 18" /><path d="M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
+    </transition>
 
-    <!-- Recording bar -->
-    <div v-if="isRecording" class="flex items-center gap-3 p-3">
-      <button
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-color-bad transition-colors hover:bg-neutral-grad-0"
-        title="Cancel"
-        @click="cancelRecording"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-
-      <div class="flex flex-1 items-center gap-2">
-        <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-color-bad" />
-        <span class="text-sm font-medium text-text-color">{{ formatDuration(recordingDuration) }}</span>
-        <span class="text-xs text-text-on-main-bg-color">Recording...</span>
-      </div>
-
-      <button
-        class="send-btn flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-color-bg-ac text-white transition-all hover:bg-color-bg-ac-1"
-        title="Send voice"
-        @click="stopRecording"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-        </svg>
-      </button>
-    </div>
+    <!-- Voice recorder (replaces recording bar when active) -->
+    <VoiceRecorder
+      v-if="voiceRecorder.state.value !== 'idle'"
+      :state="voiceRecorder.state.value"
+      :duration="voiceRecorder.duration.value"
+      :waveform-data="voiceRecorder.waveformData.value"
+      :recorded-blob="voiceRecorder.recordedBlob.value"
+      @start="voiceRecorder.startRecording()"
+      @stop-and-send="handleVoiceSend"
+      @stop-and-preview="voiceRecorder.stopAndPreview()"
+      @send-preview="handleVoicePreviewSend"
+      @lock="voiceRecorder.lock()"
+      @cancel="voiceRecorder.cancel()"
+    />
 
     <!-- Input row -->
-    <div v-else class="flex items-end gap-2 p-3">
-      <!-- Attachment button -->
-      <button
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
-        :disabled="sending"
-        title="Attach"
-        @click="showAttachmentPanel = true"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-        </svg>
-      </button>
-
+    <div v-else class="flex items-end gap-1 px-2 py-2">
       <!-- Hidden file inputs -->
       <input
         ref="photoInputRef"
@@ -306,7 +288,7 @@ const insertEmoji = (emoji: string) => {
         class="hidden"
         multiple
         accept="image/*,video/*"
-        @change="handleFileSelect"
+        @change="handlePhotoSelect"
       />
       <input
         ref="fileInputRef"
@@ -317,13 +299,13 @@ const insertEmoji = (emoji: string) => {
         @change="handleFileSelect"
       />
 
-      <!-- Emoji button -->
+      <!-- Emoji button (left of textarea) -->
       <button
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color/60 transition-colors hover:text-text-on-main-bg-color"
         title="Emoji"
-        @click="showEmojiPicker = !showEmojiPicker"
+        @click="(e: MouseEvent) => { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); emojiPickerPos = { x: rect.left, y: rect.top }; showEmojiPicker = !showEmojiPicker; }"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" />
         </svg>
       </button>
@@ -339,6 +321,19 @@ const insertEmoji = (emoji: string) => {
         @keydown="handleKeydown"
         @input="handleInput"
       />
+
+      <!-- Attachment button (right of textarea) -->
+      <button
+        ref="attachBtnRef"
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color/60 transition-colors hover:text-text-on-main-bg-color"
+        :disabled="sending"
+        title="Attach"
+        @click="toggleAttachmentPanel"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+        </svg>
+      </button>
 
       <!-- Send / Confirm edit button -->
       <button
@@ -371,32 +366,53 @@ const insertEmoji = (emoji: string) => {
       </button>
 
       <!-- Mic button (shown when input is empty) -->
-      <button
+      <VoiceRecorder
         v-else
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
-        title="Voice message"
-        @click="startRecording"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-          <line x1="12" y1="19" x2="12" y2="23" />
-          <line x1="8" y1="23" x2="16" y2="23" />
-        </svg>
-      </button>
+        :state="voiceRecorder.state.value"
+        :duration="voiceRecorder.duration.value"
+        :waveform-data="voiceRecorder.waveformData.value"
+        :recorded-blob="voiceRecorder.recordedBlob.value"
+        @start="voiceRecorder.startRecording()"
+        @start-locked="voiceRecorder.startAndLock()"
+        @stop-and-send="handleVoiceSend"
+        @stop-and-preview="voiceRecorder.stopAndPreview()"
+        @send-preview="handleVoicePreviewSend"
+        @lock="voiceRecorder.lock()"
+        @cancel="voiceRecorder.cancel()"
+      />
     </div>
 
     <EmojiPicker
       :show="showEmojiPicker"
+      :x="emojiPickerPos.x"
+      :y="emojiPickerPos.y"
+      mode="input"
       @close="showEmojiPicker = false"
       @select="insertEmoji"
     />
 
     <AttachmentPanel
       :show="showAttachmentPanel"
+      :x="attachmentPanelPos.x"
+      :y="attachmentPanelPos.y"
       @close="showAttachmentPanel = false"
       @select-photo="openPhotoPicker"
       @select-file="openFilePicker"
+    />
+
+    <MediaPreview
+      :show="mediaUpload.files.value.length > 0"
+      :files="mediaUpload.files.value"
+      :active-index="mediaUpload.activeIndex.value"
+      :caption="mediaUpload.caption.value"
+      :caption-above="mediaUpload.captionAbove.value"
+      :sending="mediaUpload.sending.value"
+      @close="mediaUpload.clear()"
+      @send="handleMediaSend"
+      @update:active-index="mediaUpload.activeIndex.value = $event"
+      @update:caption="mediaUpload.caption.value = $event"
+      @update:caption-above="mediaUpload.captionAbove.value = $event"
+      @remove-file="mediaUpload.removeFile($event)"
     />
   </div>
 </template>
@@ -411,5 +427,20 @@ const insertEmoji = (emoji: string) => {
   0% { transform: scale(1); }
   50% { transform: scale(0.9); }
   100% { transform: scale(1); }
+}
+.input-bar-enter-active,
+.input-bar-leave-active {
+  transition: max-height 0.2s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+.input-bar-enter-from,
+.input-bar-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+.input-bar-enter-to,
+.input-bar-leave-from {
+  max-height: 80px;
+  opacity: 1;
 }
 </style>

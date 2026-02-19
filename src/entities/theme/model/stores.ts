@@ -7,6 +7,8 @@ import { computed, ref } from "vue";
 
 const NAMESPACE = "theme";
 
+export const DEFAULT_QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
+
 const ACCENT_COLORS = [
   { name: "Blue", value: "#3B82F6" },
   { name: "Purple", value: "#8B5CF6" },
@@ -166,6 +168,27 @@ export const useThemeStore = defineStore(NAMESPACE, () => {
     setLSGrouping(v);
   };
 
+  // --- Quick reactions ---
+  const { setLSValue: setLSQuickReactions, value: lsQuickReactions } =
+    useLocalStorage<string[]>("quick_reactions");
+  const quickReactions = ref<string[]>(lsQuickReactions || [...DEFAULT_QUICK_REACTIONS]);
+
+  const setQuickReactions = (emojis: string[]) => {
+    quickReactions.value = emojis;
+    setLSQuickReactions(emojis);
+  };
+
+  // --- Recent emojis ---
+  const { setLSValue: setLSRecentEmojis, value: lsRecentEmojis } =
+    useLocalStorage<string[]>("recent_emojis");
+  const recentEmojis = ref<string[]>(lsRecentEmojis || []);
+
+  const addRecentEmoji = (emoji: string) => {
+    const filtered = recentEmojis.value.filter(e => e !== emoji);
+    recentEmojis.value = [emoji, ...filtered].slice(0, 24);
+    setLSRecentEmojis(recentEmojis.value);
+  };
+
   // --- CSS var helper ---
   const applyCSSVar = (name: string, value: string) => {
     document.documentElement.style.setProperty(name, value);
@@ -192,6 +215,9 @@ export const useThemeStore = defineStore(NAMESPACE, () => {
     setChatWallpaper("");
     setShowTimestamps(true);
     setMessageGrouping(true);
+    setQuickReactions([...DEFAULT_QUICK_REACTIONS]);
+    recentEmojis.value = [];
+    setLSRecentEmojis([]);
   };
 
   // --- Init ---
@@ -227,6 +253,10 @@ export const useThemeStore = defineStore(NAMESPACE, () => {
     setShowTimestamps,
     messageGrouping,
     setMessageGrouping,
+    quickReactions,
+    setQuickReactions,
+    recentEmojis,
+    addRecentEmoji,
     resetToDefaults,
   };
 });

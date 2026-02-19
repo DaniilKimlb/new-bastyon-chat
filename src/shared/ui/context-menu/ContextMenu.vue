@@ -19,8 +19,8 @@ const props = defineProps<Props>();
 const emit = defineEmits<{ close: []; select: [action: string] }>();
 
 const style = computed(() => {
-  const menuWidth = 200;
-  const menuHeight = props.items.length * 44 + 8;
+  const menuWidth = 280; // wide enough for reaction row + more button
+  const menuHeight = props.items.length * 44 + 60; // +60 for header
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const left = Math.min(props.x, vw - menuWidth - 8);
@@ -39,7 +39,7 @@ const handleSelect = (action: string) => {
     <transition name="ctx-menu">
       <div v-if="props.show" class="fixed inset-0 z-50" @click.self="emit('close')" @contextmenu.prevent="emit('close')">
         <div
-          class="absolute w-[200px] overflow-hidden rounded-xl border border-neutral-grad-0 bg-background-total-theme py-1 shadow-xl"
+          class="absolute min-w-[200px] overflow-hidden rounded-xl border border-neutral-grad-0 bg-background-total-theme py-1 shadow-xl"
           :style="style"
         >
           <slot name="header" />

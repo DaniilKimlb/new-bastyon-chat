@@ -7,6 +7,15 @@ const URL_RE = /https?:\/\/[^\s<>]+|www\.[^\s<>]+/g;
 const MENTION_RE = /@([a-fA-F0-9]{34,68}):([^\s]+)/g;
 
 /**
+ * Strip hex addresses from mentions for plain-text preview.
+ * "@50486457...5:Daniel_Satchkov" → "@Daniel_Satchkov"
+ */
+export function stripMentionAddresses(text: string): string {
+  if (!text) return "";
+  return text.replace(MENTION_RE, (_match, _hex, name) => `@${name}`);
+}
+
+/**
  * Parse a message string into renderable segments: plain text, links, and mentions.
  * Segments are returned in the order they appear in the input.
  */

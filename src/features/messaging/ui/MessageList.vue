@@ -82,10 +82,11 @@ const handleContextAction = (action: string, message: import("@/entities/chat").
 
 const handleContextReaction = (emoji: string, message: import("@/entities/chat").Message) => {
   toggleReaction(message.id, emoji);
+  themeStore.addRecentEmoji(emoji);
 };
 
 const emojiPickerTarget = ref<import("@/entities/chat").Message | null>(null);
-const showEmojiPicker = ref(false);
+const emojiPicker = ref<{ show: boolean; x: number; y: number; mode: "reaction" | "input" }>({ show: false, x: 0, y: 0, mode: "reaction" });
 
 const showMediaViewer = ref(false);
 const mediaViewerMessageId = ref<string | null>(null);
@@ -97,14 +98,15 @@ const handleOpenMedia = (message: import("@/entities/chat").Message) => {
 
 const handleOpenEmojiPicker = (message: import("@/entities/chat").Message) => {
   emojiPickerTarget.value = message;
-  showEmojiPicker.value = true;
+  emojiPicker.value = { show: true, x: contextMenu.value.x, y: contextMenu.value.y, mode: "reaction" };
 };
 
 const handleEmojiSelect = (emoji: string) => {
   if (emojiPickerTarget.value) {
     toggleReaction(emojiPickerTarget.value.id, emoji);
   }
-  showEmojiPicker.value = false;
+  themeStore.addRecentEmoji(emoji);
+  emojiPicker.value.show = false;
   emojiPickerTarget.value = null;
 };
 
@@ -252,6 +254,8 @@ defineExpose({ scrollToMessage });
           @reply="(msg) => { chatStore.replyingTo = { id: msg.id, senderId: msg.senderId, content: msg.content.slice(0, 150), type: msg.type }; }"
           @scroll-to-reply="scrollToMessage"
           @open-media="handleOpenMedia"
+          @toggle-reaction="(emoji, messageId) => toggleReaction(messageId, emoji)"
+          @add-reaction="handleOpenEmojiPicker"
         >
           <template #avatar>
             <UserAvatar :address="message.senderId" size="sm" />
@@ -285,8 +289,11 @@ defineExpose({ scrollToMessage });
 
     <!-- Full emoji picker (from context menu [+]) -->
     <EmojiPicker
-      :show="showEmojiPicker"
-      @close="showEmojiPicker = false"
+      :show="emojiPicker.show"
+      :x="emojiPicker.x"
+      :y="emojiPicker.y"
+      :mode="emojiPicker.mode"
+      @close="emojiPicker.show = false"
       @select="handleEmojiSelect"
     />
 

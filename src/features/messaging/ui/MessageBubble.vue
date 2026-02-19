@@ -5,6 +5,9 @@ import { formatTime } from "@/shared/lib/format";
 import { stripMentionAddresses } from "@/shared/lib/message-format";
 import { useFileDownload } from "../model/use-file-download";
 import MessageContent from "./MessageContent.vue";
+import MessageStatusIcon from "./MessageStatusIcon.vue";
+import ReactionRow from "./ReactionRow.vue";
+import VoiceMessage from "./VoiceMessage.vue";
 import { ref, onMounted } from "vue";
 import { useLongPress, useSwipeGesture } from "@/shared/lib/gestures";
 import { useThemeStore } from "@/entities/theme";
@@ -29,7 +32,17 @@ const emit = defineEmits<{
   contextmenu: [payload: { message: Message; x: number; y: number }];
   openMedia: [message: Message];
   scrollToReply: [messageId: string];
+  toggleReaction: [emoji: string, messageId: string];
+  addReaction: [message: Message];
 }>();
+
+const handleToggleReaction = (emoji: string) => {
+  emit("toggleReaction", emoji, props.message.id);
+};
+
+const handleAddReaction = () => {
+  emit("addReaction", props.message);
+};
 
 const { onPointerdown, onPointermove, onPointerup, onPointerleave } = useLongPress({
   onTrigger: (e) => {
@@ -80,16 +93,9 @@ const SENDER_COLORS = ["#E17076", "#FAA774", "#A695E7", "#7BC862", "#6EC9CB", "#
 function hashStr(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return Math.abs(h); }
 const senderColor = computed(() => SENDER_COLORS[hashStr(props.message.senderId) % SENDER_COLORS.length]);
 
-const statusIcon = computed(() => {
-  switch (props.message.status) {
-    case MessageStatus.sending: return "\u23F3";
-    case MessageStatus.sent: return "\u2713";
-    case MessageStatus.delivered: return "\u2713\u2713";
-    case MessageStatus.read: return "\u2713\u2713";
-    case MessageStatus.failed: return "\u2717";
-    default: return "";
-  }
-});
+const msgStatus = computed(() => props.message.status);
+const isRead = computed(() => props.message.status === MessageStatus.read);
+const isSending = computed(() => props.message.status === MessageStatus.sending);
 
 const fileIcon = computed(() => {
   const type = props.message.fileInfo?.type ?? "";
@@ -242,22 +248,36 @@ const replyPreviewText = computed(() => {
             Failed to load image
           </div>
           <img v-else-if="fileState.objectUrl" :src="fileState.objectUrl" :alt="message.fileInfo?.name" class="block max-h-[360px] max-w-full object-cover" loading="lazy" />
-          <div v-if="themeStore.showTimestamps" class="absolute bottom-1 right-2 flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5">
+          <!-- Sending overlay -->
+          <div v-if="isSending" class="absolute inset-0 flex items-center justify-center bg-black/30">
+            <div class="h-8 w-8 animate-spin rounded-full border-3 border-white border-t-transparent" />
+          </div>
+          <div v-if="themeStore.showTimestamps && !message.fileInfo?.caption" class="absolute bottom-1 right-2 flex items-center gap-1 rounded-full bg-black/40 px-2 py-0.5">
             <span class="text-[10px] text-white/90">{{ time }}</span>
-            <span v-if="props.isOwn" class="text-[10px] text-white/90">{{ statusIcon }}</span>
+            <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" light />
           </div>
         </div>
 
-        <!-- Reactions row -->
-        <div v-if="message.reactions && Object.keys(message.reactions).length" class="flex flex-wrap gap-1 px-2 py-1">
+        <!-- Caption -->
+        <div
+          v-if="message.fileInfo?.caption"
+          class="px-3 py-1.5 text-chat-base"
+          :class="props.isOwn ? 'text-text-on-bg-ac-color' : 'text-text-color'"
+        >
+          <MessageContent :text="message.fileInfo.caption" />
           <span
-            v-for="(data, emoji) in message.reactions"
-            :key="emoji"
-            class="reaction-chip inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs"
-            :class="data.myEventId ? 'bg-color-bg-ac/20 text-color-bg-ac' : 'bg-neutral-grad-0 text-text-on-main-bg-color'"
+            v-if="themeStore.showTimestamps"
+            class="relative -bottom-[3px] ml-2 inline-flex items-center gap-0.5 whitespace-nowrap align-bottom text-[10px]"
+            :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
           >
-            {{ emoji }} {{ data.count > 1 ? data.count : '' }}
+            {{ time }}
+            <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" />
           </span>
+        </div>
+
+        <!-- Reactions row -->
+        <div v-if="message.reactions && Object.keys(message.reactions).length" class="px-2 pb-1">
+          <ReactionRow :reactions="message.reactions" :is-own="props.isOwn" @toggle="handleToggleReaction" @add-reaction="handleAddReaction" />
         </div>
 
       </div>
@@ -299,19 +319,39 @@ const replyPreviewText = computed(() => {
             <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" class="text-color-bg-ac"><polygon points="5 3 19 12 5 21 5 3" /></svg>
           </button>
         </div>
-        <div class="flex items-center justify-between px-3 py-1.5">
+        <div v-if="!message.fileInfo?.caption" class="flex items-center justify-between px-3 py-1.5">
           <span class="truncate text-xs" :class="props.isOwn ? 'text-white/70' : 'text-text-on-main-bg-color'">{{ message.fileInfo?.name }}</span>
           <div v-if="themeStore.showTimestamps" class="flex items-center gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
             <span class="text-[10px]">{{ time }}</span>
-            <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+            <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" />
           </div>
+        </div>
+        <!-- Caption -->
+        <div
+          v-if="message.fileInfo?.caption"
+          class="px-3 py-1.5 text-chat-base"
+          :class="props.isOwn ? 'text-text-on-bg-ac-color' : 'text-text-color'"
+        >
+          <MessageContent :text="message.fileInfo.caption" />
+          <span
+            v-if="themeStore.showTimestamps"
+            class="relative -bottom-[3px] ml-2 inline-flex items-center gap-0.5 whitespace-nowrap align-bottom text-[10px]"
+            :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'"
+          >
+            {{ time }}
+            <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" />
+          </span>
+        </div>
+        <!-- Reactions row -->
+        <div v-if="message.reactions && Object.keys(message.reactions).length" class="px-2 pb-1">
+          <ReactionRow :reactions="message.reactions" :is-own="props.isOwn" @toggle="handleToggleReaction" @add-reaction="handleAddReaction" />
         </div>
       </div>
 
       <!-- Audio message -->
       <div
         v-else-if="message.type === MessageType.audio && hasFileInfo"
-        class="rounded-bubble px-3 py-2"
+        class="min-w-[240px] rounded-bubble px-3 py-2"
         :class="[tailClass, props.isOwn ? 'bg-chat-bubble-own text-text-on-bg-ac-color' : 'bg-chat-bubble-other text-text-color']"
       >
         <!-- Forwarded indicator -->
@@ -336,19 +376,13 @@ const replyPreviewText = computed(() => {
             <div class="truncate text-[11px] opacity-70">{{ replyPreviewText }}</div>
           </div>
         </div>
-        <audio v-if="fileState.objectUrl" :src="fileState.objectUrl" controls class="h-10 w-full max-w-full min-w-0" />
-        <button v-else-if="!fileState.loading" class="flex items-center gap-2 text-sm hover:underline" @click="handleVideoAudioLoad">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-          {{ message.fileInfo?.name }}
-        </button>
-        <div v-else class="flex items-center gap-2">
-          <div class="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          <span class="text-xs">Loading...</span>
-        </div>
+        <VoiceMessage :message="message" :is-own="props.isOwn" />
         <div v-if="themeStore.showTimestamps" class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
           <span class="text-[10px]">{{ time }}</span>
-          <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+          <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" />
         </div>
+        <!-- Reactions row -->
+        <ReactionRow v-if="message.reactions && Object.keys(message.reactions).length" :reactions="message.reactions" :is-own="props.isOwn" @toggle="handleToggleReaction" @add-reaction="handleAddReaction" />
       </div>
 
       <!-- File message -->
@@ -398,10 +432,15 @@ const replyPreviewText = computed(() => {
           </svg>
         </button>
         <p v-if="fileState.error" class="mt-1 text-xs text-color-bad">{{ fileState.error }}</p>
+        <div v-if="message.fileInfo?.caption" class="mt-1 text-chat-base opacity-90">
+          <MessageContent :text="message.fileInfo.caption" />
+        </div>
         <div v-if="themeStore.showTimestamps" class="mt-1 flex items-center justify-end gap-1" :class="props.isOwn ? 'text-white/60' : 'text-text-on-main-bg-color'">
           <span class="text-[10px]">{{ time }}</span>
-          <span v-if="props.isOwn" class="text-[10px]">{{ statusIcon }}</span>
+          <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" />
         </div>
+        <!-- Reactions row -->
+        <ReactionRow v-if="message.reactions && Object.keys(message.reactions).length" :reactions="message.reactions" :is-own="props.isOwn" @toggle="handleToggleReaction" @add-reaction="handleAddReaction" />
       </div>
 
       <!-- Text message (default) -->
@@ -454,35 +493,14 @@ const replyPreviewText = computed(() => {
           >
             <span v-if="message.edited" class="italic">edited</span>
             {{ time }}
-            <span v-if="props.isOwn">{{ statusIcon }}</span>
+            <MessageStatusIcon v-if="props.isOwn" :status="msgStatus" />
           </span>
         </div>
 
         <!-- Reactions row -->
-        <div v-if="message.reactions && Object.keys(message.reactions).length" class="mt-1 flex flex-wrap gap-1">
-          <span
-            v-for="(data, emoji) in message.reactions"
-            :key="emoji"
-            class="reaction-chip inline-flex cursor-pointer items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs transition-colors"
-            :class="data.myEventId ? 'bg-color-bg-ac/20 text-color-bg-ac' : 'bg-neutral-grad-0 text-text-on-main-bg-color hover:bg-neutral-grad-2'"
-          >
-            {{ emoji }} {{ data.count > 1 ? data.count : '' }}
-          </span>
-        </div>
+        <ReactionRow v-if="message.reactions && Object.keys(message.reactions).length" :reactions="message.reactions" :is-own="props.isOwn" @toggle="handleToggleReaction" @add-reaction="handleAddReaction" />
       </div>
     </div>
   </div>
 </template>
 
-<style>
-@media (prefers-reduced-motion: no-preference) {
-  .reaction-chip {
-    animation: reaction-pop 0.25s ease;
-  }
-}
-@keyframes reaction-pop {
-  0% { transform: scale(0); }
-  60% { transform: scale(1.2); }
-  100% { transform: scale(1); }
-}
-</style>

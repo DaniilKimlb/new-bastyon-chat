@@ -57,7 +57,43 @@ export function parseFileInfo(content: Record<string, unknown>, msgtype: string)
       url: info.url ?? (content.url as string) ?? "",
       w: info.w,
       h: info.h,
+      caption: info.caption ?? undefined,
+      captionAbove: info.captionAbove ?? undefined,
       secrets: info.secrets ? {
+        block: info.secrets.block,
+        keys: info.secrets.keys,
+        v: info.secrets.v ?? info.secrets.version ?? 1,
+      } : undefined,
+    };
+  }
+
+  if (msgtype === "m.audio" && info) {
+    return {
+      name: (content.body as string) ?? "Audio",
+      type: info.mimetype ?? "audio/mpeg",
+      size: info.size ?? 0,
+      url: info.url ?? (content.url as string) ?? "",
+      duration: info.duration ? Math.round(info.duration / 1000) : undefined,
+      waveform: info.waveform,
+      secrets: info.secrets ? {
+        block: info.secrets.block,
+        keys: info.secrets.keys,
+        v: info.secrets.v ?? info.secrets.version ?? 1,
+      } : undefined,
+    };
+  }
+
+  if (msgtype === "m.video") {
+    const url = info?.url ?? (content.url as string) ?? "";
+    return {
+      name: (content.body as string) ?? "Video",
+      type: info?.mimetype ?? "video/mp4",
+      size: info?.size ?? 0,
+      url,
+      w: info?.w,
+      h: info?.h,
+      duration: info?.duration ? Math.round(info.duration / 1000) : undefined,
+      secrets: info?.secrets ? {
         block: info.secrets.block,
         keys: info.secrets.keys,
         v: info.secrets.v ?? info.secrets.version ?? 1,

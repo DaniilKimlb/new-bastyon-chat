@@ -162,6 +162,14 @@ watch(currentMessage, async (msg) => {
           </div>
         </div>
 
+        <!-- Caption -->
+        <div
+          v-if="currentMessage.fileInfo?.caption"
+          class="shrink-0 px-4 py-3 text-center text-sm text-white/90"
+        >
+          {{ currentMessage.fileInfo.caption }}
+        </div>
+
         <!-- Navigation arrows (desktop) -->
         <button
           v-if="currentIndex > 0"

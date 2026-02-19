@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import MainLayout from "@/widgets/layouts/MainLayout.vue";
 import { useThemeStore, Theme } from "@/entities/theme";
-import { ACCENT_COLORS, DENSITY_MAP, BUBBLE_RADIUS_MAP } from "@/entities/theme/model/stores";
+import { ACCENT_COLORS, DENSITY_MAP, BUBBLE_RADIUS_MAP, DEFAULT_QUICK_REACTIONS } from "@/entities/theme/model/stores";
 import type { FontSize, MessageDensity, BubbleCorners } from "@/entities/theme/model/types";
 import { SettingsSection } from "@/shared/ui/settings-section";
 import { Toggle } from "@/shared/ui/toggle";
 import Modal from "@/shared/ui/modal/Modal.vue";
+import EmojiPicker from "@/features/messaging/ui/EmojiPicker.vue";
 import { ref } from "vue";
 
 const themeStore = useThemeStore();
@@ -74,6 +75,29 @@ const CORNERS: { label: string; value: BubbleCorners }[] = [
   { label: "Round", value: "round" },
 ];
 
+// --- Quick reactions editing ---
+const editingQuickReactions = ref(false);
+const editingSlotIndex = ref(-1);
+const quickReactionPicker = ref({ show: false, x: 0, y: 0 });
+
+const startEditQuickReaction = (index: number, event: MouseEvent) => {
+  editingSlotIndex.value = index;
+  const btn = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  quickReactionPicker.value = { show: true, x: btn.left, y: btn.bottom + 4 };
+};
+
+const handleQuickReactionSelect = (emoji: string) => {
+  const updated = [...themeStore.quickReactions];
+  updated[editingSlotIndex.value] = emoji;
+  themeStore.setQuickReactions(updated);
+  quickReactionPicker.value.show = false;
+};
+
+const resetQuickReactions = () => {
+  themeStore.setQuickReactions([...DEFAULT_QUICK_REACTIONS]);
+  editingQuickReactions.value = false;
+};
+
 // --- Reset confirmation ---
 const showResetModal = ref(false);
 const confirmReset = () => {
@@ -118,7 +142,7 @@ const previewSpacing = computed(() => DENSITY_MAP[themeStore.messageDensity]);
               </div>
               <div>
                 <div class="text-sm font-medium text-text-color">Alice</div>
-                <div class="text-[10px] text-text-on-main-bg-color">online</div>
+                <div class="text-[10px] text-text-on-main-bg-color">chat</div>
               </div>
             </div>
             <!-- Preview messages -->
@@ -471,7 +495,57 @@ const previewSpacing = computed(() => DENSITY_MAP[themeStore.messageDensity]);
             </div>
           </SettingsSection>
 
-          <!-- Section 8: Reset to Defaults -->
+          <!-- Section 8: Quick Reactions -->
+          <SettingsSection title="Quick Reactions" description="Customize the emoji shortcuts shown in the context menu">
+            <div class="flex items-center gap-2">
+              <div class="flex gap-1.5">
+                <button
+                  v-for="(emoji, i) in themeStore.quickReactions"
+                  :key="i"
+                  class="flex h-10 w-10 items-center justify-center rounded-lg text-xl transition-all"
+                  :class="editingQuickReactions ? 'border-2 border-dashed border-color-bg-ac/40 hover:border-color-bg-ac hover:bg-color-bg-ac/5' : 'border border-neutral-grad-0'"
+                  @click="editingQuickReactions ? startEditQuickReaction(i, $event) : undefined"
+                >
+                  {{ emoji }}
+                </button>
+              </div>
+              <button
+                v-if="!editingQuickReactions"
+                class="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-color-bg-ac transition-colors hover:bg-color-bg-ac/5"
+                @click="editingQuickReactions = true"
+              >
+                Edit
+              </button>
+              <div v-else class="ml-auto flex gap-2">
+                <button
+                  class="rounded-lg px-3 py-1.5 text-xs text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
+                  @click="resetQuickReactions"
+                >
+                  Reset
+                </button>
+                <button
+                  class="rounded-lg bg-color-bg-ac px-3 py-1.5 text-xs font-medium text-text-on-bg-ac-color transition-colors"
+                  @click="editingQuickReactions = false"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+            <p v-if="editingQuickReactions" class="mt-1.5 text-xs text-text-on-main-bg-color">
+              Tap an emoji to replace it
+            </p>
+          </SettingsSection>
+
+          <EmojiPicker
+            :show="quickReactionPicker.show"
+            :x="quickReactionPicker.x"
+            :y="quickReactionPicker.y"
+            mode="reaction"
+            @close="quickReactionPicker.show = false"
+            @select="handleQuickReactionSelect"
+          />
+
+          <!-- Section 9: Reset to Defaults -->
           <div class="pb-8">
             <button
               class="w-full rounded-lg border border-color-bad/30 px-4 py-3 text-sm font-medium text-color-bad transition-colors hover:bg-color-bad/5"

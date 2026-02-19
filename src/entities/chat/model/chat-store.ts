@@ -4,7 +4,7 @@ import type { Pcrypto, PcryptoRoomInstance } from "@/entities/matrix/model/matri
 import { getmatrixid } from "@/shared/lib/matrix/functions";
 import { matrixIdToAddress, messageTypeFromMime, parseFileInfo } from "../lib/chat-helpers";
 import { defineStore } from "pinia";
-import { computed, ref, shallowRef } from "vue";
+import { computed, ref, shallowRef, triggerRef } from "vue";
 
 import type { ChatRoom, FileInfo, Message, ReplyTo } from "./types";
 import { MessageStatus, MessageType } from "./types";
@@ -73,6 +73,12 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
       } else if (msgtype === "m.image") {
         previewBody = "[photo]";
         previewType = MessageType.image;
+      } else if (msgtype === "m.audio") {
+        previewBody = "[voice message]";
+        previewType = MessageType.audio;
+      } else if (msgtype === "m.video") {
+        previewBody = "[video]";
+        previewType = MessageType.video;
       } else {
         previewBody = (content?.body as string) ?? "";
       }
@@ -140,7 +146,7 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
     unreadCount,
     members: memberIds,
     isGroup,
-    updatedAt: lastTs || Date.now(),
+    updatedAt: lastTs || 0,
   };
 }
 
@@ -319,12 +325,22 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       return true;
     });
 
-    rooms.value = interactiveRooms.map((r) => {
-      const chatRoom = matrixRoomToChatRoom(r, kit, myUserId);
-      // Preserve unreadCount=0 for active room — SDK hasn't processed the read receipt yet
-      if (chatRoom.id === activeRoomId.value) chatRoom.unreadCount = 0;
-      return chatRoom;
-    });
+    rooms.value = interactiveRooms
+      .map((r) => {
+        const chatRoom = matrixRoomToChatRoom(r, kit, myUserId);
+        // Preserve unreadCount=0 for active room — SDK hasn't processed the read receipt yet
+        if (chatRoom.id === activeRoomId.value) chatRoom.unreadCount = 0;
+        // If we already have loaded messages for this room, use the latest as preview.
+        // This avoids "[encrypted]" for our own optimistic messages that are plaintext.
+        const loadedMsgs = messages.value[chatRoom.id];
+        if (loadedMsgs?.length) {
+          chatRoom.lastMessage = loadedMsgs[loadedMsgs.length - 1];
+          chatRoom.updatedAt = Math.max(chatRoom.updatedAt, chatRoom.lastMessage.timestamp);
+        }
+        return chatRoom;
+      })
+      // Filter out rooms with no messages
+      .filter((r) => r.lastMessage !== undefined);
 
     // Build user display name cache from room members
     for (const r of interactiveRooms) {
@@ -394,9 +410,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         const matrixRoom = matrixService.getRoom(roomId) as any;
         if (matrixRoom) {
           const events = matrixRoom.timeline ?? matrixRoom.getLiveTimeline?.()?.getEvents?.() ?? [];
+          console.log("[chat-store] setActiveRoom: sending read receipt, events count=%d", events.length);
           if (events.length > 0) {
-            matrixService.sendReadReceipt(events[events.length - 1]);
+            const lastEvent = events[events.length - 1];
+            console.log("[chat-store] setActiveRoom: last event id=%s type=%s", lastEvent?.event?.event_id, lastEvent?.event?.type);
+            matrixService.sendReadReceipt(lastEvent);
           }
+        } else {
+          console.log("[chat-store] setActiveRoom: no matrixRoom found");
         }
       } catch (e) {
         console.warn("[chat-store] sendReadReceipt error:", e);
@@ -430,6 +451,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     if (messages.value[roomId].some((m) => m.id === message.id)) return;
 
     messages.value[roomId].push(message);
+    triggerRef(messages);
 
     // Update room's last message and timestamp
     const room = rooms.value.find((r) => r.id === roomId);
@@ -439,11 +461,24 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       if (roomId !== activeRoomId.value) {
         room.unreadCount++;
       }
+      triggerRef(rooms);
     }
   };
 
   const setMessages = (roomId: string, msgs: Message[]) => {
     messages.value[roomId] = msgs;
+  };
+
+  /** Replace a temporary message ID with the server-assigned event_id */
+  const updateMessageId = (roomId: string, tempId: string, serverId: string) => {
+    const roomMessages = messages.value[roomId];
+    if (roomMessages) {
+      const msg = roomMessages.find((m) => m.id === tempId);
+      if (msg) {
+        msg.id = serverId;
+        triggerRef(messages);
+      }
+    }
   };
 
   const updateMessageStatus = (
@@ -454,7 +489,10 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     const roomMessages = messages.value[roomId];
     if (roomMessages) {
       const msg = roomMessages.find((m) => m.id === messageId);
-      if (msg) msg.status = status;
+      if (msg) {
+        msg.status = status;
+        triggerRef(messages);
+      }
     }
   };
 
@@ -466,6 +504,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       if (msg) {
         msg.content = newContent;
         msg.edited = true;
+        triggerRef(messages);
       }
     }
   };
@@ -540,15 +579,19 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     const mtype = content.msgtype as string;
     let fileInfo: FileInfo | undefined;
 
-    if (mtype === "m.image" || mtype === "m.file") {
+    if (mtype === "m.image" || mtype === "m.file" || mtype === "m.audio" || mtype === "m.video") {
       fileInfo = parseFileInfo(content, mtype);
       if (fileInfo) {
-        msgType = mtype === "m.image"
-          ? MessageType.image
-          : messageTypeFromMime(fileInfo.type);
+        if (mtype === "m.image") msgType = MessageType.image;
+        else if (mtype === "m.audio") msgType = MessageType.audio;
+        else if (mtype === "m.video") msgType = MessageType.video;
+        else msgType = messageTypeFromMime(fileInfo.type);
         body = fileInfo.name;
       } else {
-        msgType = mtype === "m.image" ? MessageType.image : MessageType.file;
+        if (mtype === "m.image") msgType = MessageType.image;
+        else if (mtype === "m.audio") msgType = MessageType.audio;
+        else if (mtype === "m.video") msgType = MessageType.video;
+        else msgType = MessageType.file;
       }
     }
 
@@ -564,6 +607,16 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       };
     }
 
+    // Parse forwarded_from metadata
+    let forwardedFrom: Message["forwardedFrom"] | undefined;
+    const fwdMeta = content["forwarded_from"] as Record<string, unknown> | undefined;
+    if (fwdMeta?.sender_id) {
+      forwardedFrom = {
+        senderId: fwdMeta.sender_id as string,
+        senderName: (fwdMeta.sender_name as string) || undefined,
+      };
+    }
+
     return {
       id: raw.event_id as string,
       roomId,
@@ -574,6 +627,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       type: msgType,
       fileInfo,
       replyTo,
+      forwardedFrom,
     };
   };
 
@@ -604,7 +658,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       messageEvents.map((event) => parseSingleEvent(event, roomId, roomCrypto).catch(() => null))
     );
 
-    const msgs = results.filter((m): m is Message => m !== null);
+    const msgs = results.filter((m): m is Message => m !== null && m.content !== "");
 
     // Apply reactions to messages
     const msgMap = new Map(msgs.map(m => [m.id, m]));
@@ -635,13 +689,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       }
     }
 
-    // Resolve reply references (fill in sender/content from parsed messages)
+    // Resolve reply references (fill in sender/content/type from parsed messages)
     for (const msg of msgs) {
       if (msg.replyTo?.id) {
         const referenced = msgMap.get(msg.replyTo.id);
         if (referenced) {
           msg.replyTo.senderId = referenced.senderId;
           msg.replyTo.content = referenced.content.slice(0, 100);
+          msg.replyTo.type = referenced.type;
         }
       }
     }
@@ -667,6 +722,54 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     return [];
   };
 
+  /** Apply existing read receipts from the Matrix room to set correct message statuses.
+   *  Walks the timeline backwards, finds the latest event that has a read receipt
+   *  from a non-self user, and marks all own messages up to that point as "read". */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applyExistingReceipts = (matrixRoom: any, timelineEvents: unknown[], msgs: Message[], myUserId: string | null) => {
+    if (!myUserId || msgs.length === 0) return;
+    try {
+      const myAddr = matrixIdToAddress(myUserId);
+      // Find the latest event that has a read receipt from a non-self user
+      let readUpToEventId: string | null = null;
+      for (let i = timelineEvents.length - 1; i >= 0; i--) {
+        const ev = timelineEvents[i];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const receipts: Array<{ userId: string; type: string }> = matrixRoom.getReceiptsForEvent?.(ev) ?? [];
+        const hasOtherRead = receipts.some(
+          (r) => r.type === "m.read" && r.userId !== myUserId
+        );
+        if (hasOtherRead) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          readUpToEventId = (ev as any)?.getId?.() ?? (ev as any)?.event?.event_id ?? null;
+          break;
+        }
+      }
+      if (!readUpToEventId) return;
+
+      // Find the index of this event in our messages and mark all own messages up to it
+      const readUpToIdx = msgs.findIndex(m => m.id === readUpToEventId);
+      if (readUpToIdx < 0) {
+        // Event not in our parsed messages — mark all as read (receipt is beyond our range)
+        for (const msg of msgs) {
+          if (msg.senderId === myAddr && msg.status === MessageStatus.sent) {
+            msg.status = MessageStatus.read;
+          }
+        }
+        return;
+      }
+      for (let i = readUpToIdx; i >= 0; i--) {
+        const msg = msgs[i];
+        if (msg.senderId !== myAddr) continue;
+        if (msg.status === MessageStatus.sent) {
+          msg.status = MessageStatus.read;
+        }
+      }
+    } catch (e) {
+      console.warn("[chat-store] applyExistingReceipts error:", e);
+    }
+  };
+
   /** Load timeline events for a room and convert to Messages */
   const loadRoomMessages = async (roomId: string) => {
     try {
@@ -687,6 +790,12 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
       const timelineEvents = getTimelineEvents(matrixRoom);
       const msgs = await parseTimelineEvents(timelineEvents, roomId);
+
+      // Apply existing read receipts to determine message status.
+      // Walk timeline backwards, find the latest read receipt from a non-self user,
+      // and mark all own messages up to that point as "read".
+      applyExistingReceipts(matrixRoom, timelineEvents, msgs, matrixService.getUserId());
+
       setMessages(roomId, msgs);
     } catch (e) {
       console.error("[chat-store] loadRoomMessages fatal error for room %s:", roomId, e);
@@ -721,13 +830,67 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     if (!reactionData.users.includes(reactionSender)) {
       reactionData.users.push(reactionSender);
       reactionData.count++;
+    }
 
-      // Track own reaction event ID for toggle/redact
-      const matrixService = getMatrixClientService();
-      if (matrixService.isMe(raw.sender as string)) {
-        reactionData.myEventId = raw.event_id as string;
+    // Update own reaction event ID — but only if the new ID is a real server ID ($...)
+    // The SDK fires timeline events with local IDs (~...) before server confirmation
+    const matrixService = getMatrixClientService();
+    const incomingId = raw.event_id as string;
+    if (matrixService.isMe(raw.sender as string) && incomingId) {
+      const currentId = reactionData.myEventId;
+      // Only update if: no ID yet, current is optimistic/local, or incoming is a real server ID
+      if (!currentId || !currentId.startsWith("$") || incomingId.startsWith("$")) {
+        reactionData.myEventId = incomingId;
       }
     }
+    triggerRef(messages);
+  };
+
+  /** Set the server-confirmed event ID for an own reaction */
+  const setReactionEventId = (roomId: string, messageId: string, emoji: string, eventId: string) => {
+    const roomMessages = messages.value[roomId];
+    if (!roomMessages) return;
+    const msg = roomMessages.find(m => m.id === messageId);
+    if (msg?.reactions?.[emoji]) {
+      msg.reactions[emoji].myEventId = eventId;
+      triggerRef(messages);
+    }
+  };
+
+  /** Optimistic add: instantly show a reaction before server confirms */
+  const optimisticAddReaction = (roomId: string, messageId: string, emoji: string, userAddress: string) => {
+    const roomMessages = messages.value[roomId];
+    if (!roomMessages) return;
+    const msg = roomMessages.find(m => m.id === messageId);
+    if (!msg) return;
+    if (!msg.reactions) msg.reactions = {};
+    if (!msg.reactions[emoji]) {
+      msg.reactions[emoji] = { count: 0, users: [] };
+    }
+    const rd = msg.reactions[emoji];
+    if (!rd.users.includes(userAddress)) {
+      rd.users.push(userAddress);
+      rd.count++;
+    }
+    // myEventId will be set by applyReaction when the server echoes back
+    rd.myEventId = "__optimistic__";
+    triggerRef(messages);
+  };
+
+  /** Optimistic remove: instantly hide a reaction before server confirms */
+  const optimisticRemoveReaction = (roomId: string, messageId: string, emoji: string, userAddress: string) => {
+    const roomMessages = messages.value[roomId];
+    if (!roomMessages) return;
+    const msg = roomMessages.find(m => m.id === messageId);
+    if (!msg?.reactions?.[emoji]) return;
+    const rd = msg.reactions[emoji];
+    rd.users = rd.users.filter(u => u !== userAddress);
+    rd.count = rd.users.length;
+    delete rd.myEventId;
+    if (rd.count === 0) {
+      delete msg.reactions[emoji];
+    }
+    triggerRef(messages);
   };
 
   /** Handle incoming timeline event from Matrix sync */
@@ -743,6 +906,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       }
 
       if (raw.type !== "m.room.message") return;
+
+      // Skip our own events — they're already in the list via optimistic add.
+      // Processing them here causes race conditions: the timeline echo may arrive
+      // before updateMessageId replaces tempId → duplicate check fails → decrypt
+      // errors appear because the event gets re-processed.
+      const matrixService = getMatrixClientService();
+      const myUserId = matrixService.getUserId();
+      if (myUserId && raw.sender === myUserId) return;
 
       const content = raw.content as Record<string, unknown>;
       let body = (content.body as string) ?? "";
@@ -767,15 +938,19 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       const mtype = content.msgtype as string;
       let fileInfo: FileInfo | undefined;
 
-      if (mtype === "m.image" || mtype === "m.file") {
+      if (mtype === "m.image" || mtype === "m.file" || mtype === "m.audio" || mtype === "m.video") {
         fileInfo = parseFileInfo(content, mtype);
         if (fileInfo) {
-          msgType = mtype === "m.image"
-            ? MessageType.image
-            : messageTypeFromMime(fileInfo.type);
+          if (mtype === "m.image") msgType = MessageType.image;
+          else if (mtype === "m.audio") msgType = MessageType.audio;
+          else if (mtype === "m.video") msgType = MessageType.video;
+          else msgType = messageTypeFromMime(fileInfo.type);
           body = fileInfo.name;
         } else {
-          msgType = mtype === "m.image" ? MessageType.image : MessageType.file;
+          if (mtype === "m.image") msgType = MessageType.image;
+          else if (mtype === "m.audio") msgType = MessageType.audio;
+          else if (mtype === "m.video") msgType = MessageType.video;
+          else msgType = MessageType.file;
         }
       }
 
@@ -791,6 +966,17 @@ export const useChatStore = defineStore(NAMESPACE, () => {
           id: replyId,
           senderId: referenced?.senderId ?? "",
           content: referenced?.content.slice(0, 100) ?? "",
+          type: referenced?.type,
+        };
+      }
+
+      // Parse forwarded_from metadata
+      let forwardedFrom: Message["forwardedFrom"] | undefined;
+      const fwdMeta = content["forwarded_from"] as Record<string, unknown> | undefined;
+      if (fwdMeta?.sender_id) {
+        forwardedFrom = {
+          senderId: fwdMeta.sender_id as string,
+          senderName: (fwdMeta.sender_name as string) || undefined,
         };
       }
 
@@ -804,15 +990,176 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         type: msgType,
         fileInfo,
         replyTo,
+        forwardedFrom,
       };
 
       addMessage(roomId, message);
+
+      // Auto-send read receipt if this room is currently active
+      if (roomId === activeRoomId.value) {
+        try {
+          const matrixService = getMatrixClientService();
+          matrixService.sendReadReceipt(event);
+        } catch { /* ignore */ }
+      }
 
       // Also refresh rooms list to update sidebar
       refreshRooms();
     } catch (e) {
       console.error("[chat-store] handleTimelineEvent error:", e);
     }
+  };
+
+  /** Handle read receipt events from other users */
+  const handleReceiptEvent = (event: unknown, room: unknown) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const receiptEvent = event as any;
+      const roomObj = room as Record<string, unknown>;
+      const roomId = roomObj?.roomId as string;
+      console.log("[chat-store] handleReceiptEvent roomId=%s", roomId);
+      if (!roomId) { console.log("[chat-store] handleReceiptEvent: no roomId"); return; }
+
+      const roomMessages = messages.value[roomId];
+      if (!roomMessages) { console.log("[chat-store] handleReceiptEvent: no messages for room"); return; }
+
+      const matrixService = getMatrixClientService();
+      const myUserId = matrixService.getUserId();
+      console.log("[chat-store] handleReceiptEvent myUserId=%s", myUserId);
+
+      // Get receipt content: { eventId: { "m.read": { userId: { ts } } } }
+      const content = receiptEvent?.getContent?.() ?? receiptEvent?.event?.content;
+      console.log("[chat-store] handleReceiptEvent content=", JSON.stringify(content));
+      if (!content) { console.log("[chat-store] handleReceiptEvent: no content"); return; }
+
+      for (const [eventId, receiptTypes] of Object.entries(content)) {
+        const readReceipts = (receiptTypes as Record<string, unknown>)?.["m.read"] as Record<string, unknown> | undefined;
+        if (!readReceipts) continue;
+
+        // Check if someone OTHER than us sent a read receipt for one of OUR messages
+        for (const userId of Object.keys(readReceipts)) {
+          console.log("[chat-store] receipt: userId=%s read eventId=%s (me=%s)", userId, eventId, myUserId);
+          if (userId === myUserId) continue; // skip our own receipts
+
+          // Find this event in our messages and mark it (and all previous) as read
+          const msgIdx = roomMessages.findIndex(m => m.id === eventId);
+          console.log("[chat-store] receipt: msgIdx=%d for eventId=%s, total msgs=%d", msgIdx, eventId, roomMessages.length);
+          if (msgIdx >= 0) {
+            const myAddr = matrixIdToAddress(myUserId ?? "");
+            console.log("[chat-store] receipt: marking read, myAddr=%s, msg.senderId=%s", myAddr, roomMessages[msgIdx].senderId);
+            // Mark this message and all earlier own messages as read
+            for (let i = msgIdx; i >= 0; i--) {
+              const msg = roomMessages[i];
+              if (msg.senderId !== myAddr) continue;
+              if (msg.status === MessageStatus.read) break; // already read, stop
+              if (msg.status === MessageStatus.sent || msg.status === MessageStatus.delivered) {
+                msg.status = MessageStatus.read;
+                console.log("[chat-store] receipt: marked msg %s as read", msg.id);
+              }
+            }
+          }
+        }
+      }
+      triggerRef(messages);
+    } catch (e) {
+      console.warn("[chat-store] handleReceiptEvent error:", e);
+    }
+  };
+
+  /** Handle redaction events (reaction removal, message deletion) */
+  const handleRedactionEvent = (event: unknown, room: unknown) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ev = event as any;
+      const redactedEventId: string = ev?.event?.redacts ?? ev?.getAssociatedId?.();
+      if (!redactedEventId) return;
+
+      const roomObj = room as Record<string, unknown>;
+      const roomId = (roomObj?.roomId as string) ?? "";
+      if (!roomId) return;
+
+      const roomMessages = messages.value[roomId];
+      if (!roomMessages) return;
+
+      // Check if the redacted event was a reaction — find and remove it
+      for (const msg of roomMessages) {
+        if (!msg.reactions) continue;
+        for (const [emoji, data] of Object.entries(msg.reactions)) {
+          if (data.myEventId === redactedEventId) {
+            // It's our own reaction being redacted
+            const matrixService = getMatrixClientService();
+            const myAddr = matrixIdToAddress(matrixService.getUserId() ?? "");
+            data.users = data.users.filter(u => u !== myAddr);
+            data.count = data.users.length;
+            delete data.myEventId;
+            if (data.count === 0) delete msg.reactions[emoji];
+            triggerRef(messages);
+            return;
+          }
+        }
+      }
+
+      // If we didn't find it as a known reaction eventId, re-parse reactions
+      // from the Matrix room timeline to get accurate state
+      const matrixService = getMatrixClientService();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const matrixRoom = matrixService.getRoom(roomId) as any;
+      if (matrixRoom) {
+        rebuildReactionsForRoom(roomId, matrixRoom);
+      }
+    } catch (e) {
+      console.warn("[chat-store] handleRedactionEvent error:", e);
+    }
+  };
+
+  /** Rebuild reactions for all messages in a room from the Matrix timeline */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rebuildReactionsForRoom = (roomId: string, matrixRoom: any) => {
+    const roomMessages = messages.value[roomId];
+    if (!roomMessages) return;
+
+    const timelineEvents = getTimelineEvents(matrixRoom);
+    const matrixService = getMatrixClientService();
+
+    // Collect all non-redacted reaction events
+    const reactionMap = new Map<string, Record<string, { count: number; users: string[]; myEventId?: string }>>();
+
+    for (const ev of timelineEvents) {
+      const raw = getRawEvent(ev);
+      if (!raw || raw.type !== "m.reaction") continue;
+      // Skip redacted events (no content or unsigned.redacted_because)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const unsigned = (raw as any).unsigned;
+      if (unsigned?.redacted_because) continue;
+      const content = raw.content as Record<string, unknown>;
+      if (!content) continue;
+
+      const relatesTo = content["m.relates_to"] as Record<string, unknown> | undefined;
+      if (!relatesTo) continue;
+      const targetId = relatesTo.event_id as string;
+      const emoji = relatesTo.key as string;
+      if (!targetId || !emoji) continue;
+
+      if (!reactionMap.has(targetId)) reactionMap.set(targetId, {});
+      const targetReactions = reactionMap.get(targetId)!;
+      if (!targetReactions[emoji]) targetReactions[emoji] = { count: 0, users: [] };
+
+      const sender = matrixIdToAddress(raw.sender as string);
+      const rd = targetReactions[emoji];
+      if (!rd.users.includes(sender)) {
+        rd.users.push(sender);
+        rd.count++;
+      }
+      if (matrixService.isMe(raw.sender as string)) {
+        rd.myEventId = raw.event_id as string;
+      }
+    }
+
+    // Apply to stored messages
+    for (const msg of roomMessages) {
+      msg.reactions = reactionMap.get(msg.id) ?? undefined;
+    }
+    triggerRef(messages);
   };
 
   return {
@@ -829,11 +1176,16 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     forwardingMessages,
     getDisplayName,
     getTypingUsers,
+    handleReceiptEvent,
+    handleRedactionEvent,
     handleTimelineEvent,
     loadRoomMessages,
     markRoomAsRead,
     messages,
     mutedRoomIds,
+    optimisticAddReaction,
+    optimisticRemoveReaction,
+    setReactionEventId,
     pinMessage,
     pinnedMessageIndex,
     pinnedMessages,
@@ -858,6 +1210,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     typing,
     unpinMessage,
     updateMessageContent,
+    updateMessageId,
     updateMessageStatus,
   };
 });
