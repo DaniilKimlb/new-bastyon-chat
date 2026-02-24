@@ -845,6 +845,11 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     if (!raw?.content || raw.type !== "m.room.message") return null;
 
     const content = raw.content as Record<string, unknown>;
+
+    // Skip edit events — they're handled separately in parseTimelineEvents
+    const relTo = content["m.relates_to"] as Record<string, unknown> | undefined;
+    if (relTo?.rel_type === "m.replace") return null;
+
     let body = (content.body as string) ?? "";
     let msgType = MessageType.text;
 
@@ -926,15 +931,23 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     // Ensure room crypto is initialized before parsing
     const roomCrypto = await ensureRoomCrypto(roomId);
 
-    // Separate messages and reactions
+    // Separate messages, reactions, and edits
     const messageEvents: unknown[] = [];
     const reactionEvents: Record<string, unknown>[] = [];
+    const editEvents: Record<string, unknown>[] = [];
 
     for (const event of timelineEvents) {
       const raw = getRawEvent(event);
       if (!raw) continue;
       if (raw.type === "m.reaction" && raw.content) {
         reactionEvents.push(raw);
+      } else if (raw.type === "m.room.message" && raw.content) {
+        const rel = (raw.content as Record<string, unknown>)["m.relates_to"] as Record<string, unknown> | undefined;
+        if (rel?.rel_type === "m.replace" && rel?.event_id) {
+          editEvents.push(raw);
+        } else {
+          messageEvents.push(event);
+        }
       } else {
         messageEvents.push(event);
       }
@@ -947,8 +960,38 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
     const msgs = results.filter((m): m is Message => m !== null && m.content !== "");
 
-    // Apply reactions to messages
+    // Apply edits to messages (decrypt if needed)
     const msgMap = new Map(msgs.map(m => [m.id, m]));
+    for (const raw of editEvents) {
+      const content = raw.content as Record<string, unknown>;
+      const rel = content["m.relates_to"] as Record<string, unknown>;
+      const targetId = rel.event_id as string;
+      const target = msgMap.get(targetId);
+      if (target) {
+        const newContent = content["m.new_content"] as Record<string, unknown> | undefined;
+        let editBody: string;
+
+        if (newContent?.msgtype === "m.encrypted" || content.msgtype === "m.encrypted") {
+          if (roomCrypto) {
+            try {
+              const decrypted = await roomCrypto.decryptEvent(raw);
+              editBody = decrypted.body;
+            } catch {
+              editBody = (newContent?.body as string) ?? (content.body as string) ?? "[decrypt error]";
+            }
+          } else {
+            editBody = "[no room crypto]";
+          }
+        } else {
+          editBody = (newContent?.body as string) ?? (content.body as string) ?? "";
+        }
+
+        target.content = editBody.replace(/^\* /, "");
+        target.edited = true;
+      }
+    }
+
+    // Apply reactions to messages
     const matrixService = getMatrixClientService();
     for (const raw of reactionEvents) {
       const content = raw.content as Record<string, unknown>;
@@ -1232,6 +1275,36 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
       if (raw.type !== "m.room.message") return;
 
+      const content = raw.content as Record<string, unknown>;
+
+      // Handle edit events (m.replace) — update existing message, don't add new
+      const editRelatesTo = content["m.relates_to"] as Record<string, unknown> | undefined;
+      if (editRelatesTo?.rel_type === "m.replace" && editRelatesTo?.event_id) {
+        const targetId = editRelatesTo.event_id as string;
+        let newBody: string;
+
+        // Edit events in encrypted rooms: m.new_content holds the ciphertext
+        const newContent = content["m.new_content"] as Record<string, unknown> | undefined;
+        if (newContent?.msgtype === "m.encrypted" || content.msgtype === "m.encrypted") {
+          const roomCrypto = await ensureRoomCrypto(roomId);
+          if (roomCrypto) {
+            try {
+              const decrypted = await roomCrypto.decryptEvent(raw);
+              newBody = decrypted.body;
+            } catch {
+              newBody = (newContent?.body as string) ?? (content.body as string) ?? "[decrypt error]";
+            }
+          } else {
+            newBody = "[no room crypto]";
+          }
+        } else {
+          newBody = (newContent?.body as string) ?? (content.body as string) ?? "";
+        }
+
+        updateMessageContent(roomId, targetId, newBody.replace(/^\* /, ""));
+        return;
+      }
+
       // Skip our own events — they're already in the list via optimistic add.
       // Processing them here causes race conditions: the timeline echo may arrive
       // before updateMessageId replaces tempId → duplicate check fails → decrypt
@@ -1239,8 +1312,6 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       const matrixService = getMatrixClientService();
       const myUserId = matrixService.getUserId();
       if (myUserId && raw.sender === myUserId) return;
-
-      const content = raw.content as Record<string, unknown>;
       let body = (content.body as string) ?? "";
       let msgType = MessageType.text;
 
