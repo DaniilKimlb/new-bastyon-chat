@@ -6,6 +6,7 @@ import Components from "unplugin-vue-components/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  base: "./",
   test: {
     globals: true,
     environment: "happy-dom",
@@ -13,6 +14,13 @@ export default defineConfig({
   },
   plugins: [
     vue(),
+    // Strip `crossorigin` from HTML — breaks Electron's file:// protocol
+    {
+      name: "strip-crossorigin",
+      transformIndexHtml(html) {
+        return html.replace(/ crossorigin/g, "");
+      },
+    },
     Components({
       deep: true,
       dirs: ["src/shared/ui"],

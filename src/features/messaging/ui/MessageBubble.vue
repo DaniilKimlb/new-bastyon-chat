@@ -75,6 +75,33 @@ const chatStore = useChatStore();
 const themeStore = useThemeStore();
 const isSelected = computed(() => chatStore.selectedMessageIds.has(props.message.id));
 
+/** Compute image placeholder/display styles using known dimensions */
+const imagePlaceholderStyle = computed(() => {
+  const fi = props.message.fileInfo;
+  const w = fi?.w;
+  const h = fi?.h;
+  if (w && h) {
+    const maxW = 320;
+    const maxH = 360;
+    const scale = Math.min(maxW / w, maxH / h, 1);
+    return { width: `${Math.round(w * scale)}px`, height: `${Math.round(h * scale)}px` };
+  }
+  return { width: "256px", height: "192px" };
+});
+
+const imageStyle = computed(() => {
+  const fi = props.message.fileInfo;
+  const w = fi?.w;
+  const h = fi?.h;
+  if (w && h) {
+    const maxW = 320;
+    const maxH = 360;
+    const scale = Math.min(maxW / w, maxH / h, 1);
+    return { width: `${Math.round(w * scale)}px`, height: `${Math.round(h * scale)}px` };
+  }
+  return {};
+});
+
 const handleBubbleClick = () => {
   if (chatStore.selectionMode) {
     chatStore.toggleSelection(props.message.id);
@@ -108,7 +135,15 @@ const fileIcon = computed(() => {
   return "file";
 });
 
+// Download image immediately — virtual scroller already handles lazy rendering
 onMounted(() => {
+  if (props.message.type === MessageType.image && props.message.fileInfo) {
+    download(props.message);
+  }
+});
+
+// Re-download if message changes (virtual scroller recycling)
+watch(() => props.message.id, () => {
   if (props.message.type === MessageType.image && props.message.fileInfo) {
     download(props.message);
   }
@@ -241,13 +276,21 @@ const replyPreviewText = computed(() => {
           </div>
         </div>
         <div class="relative cursor-pointer" @click="handleMediaClick">
-          <div v-if="fileState.loading" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0">
+          <div
+            v-if="fileState.loading || (!fileState.objectUrl && !fileState.error)"
+            class="flex items-center justify-center bg-neutral-grad-0"
+            :style="imagePlaceholderStyle"
+          >
             <div class="h-8 w-8 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
           </div>
-          <div v-else-if="fileState.error" class="flex h-48 w-64 items-center justify-center bg-neutral-grad-0 text-xs text-color-bad">
+          <div
+            v-else-if="fileState.error"
+            class="flex items-center justify-center bg-neutral-grad-0 text-xs text-color-bad"
+            :style="imagePlaceholderStyle"
+          >
             Failed to load image
           </div>
-          <img v-else-if="fileState.objectUrl" :src="fileState.objectUrl" :alt="message.fileInfo?.name" class="block max-h-[360px] max-w-full object-cover" loading="lazy" />
+          <img v-else-if="fileState.objectUrl" :src="fileState.objectUrl" :alt="message.fileInfo?.name" class="block max-h-[360px] max-w-full object-cover" :style="imageStyle" />
           <!-- Sending overlay -->
           <div v-if="isSending" class="absolute inset-0 flex items-center justify-center bg-black/30">
             <div class="h-8 w-8 animate-spin rounded-full border-3 border-white border-t-transparent" />

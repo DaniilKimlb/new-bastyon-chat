@@ -3,10 +3,14 @@ import type { FileInfo, Message } from "@/entities/chat";
 import { useAuthStore } from "@/entities/auth";
 import { getMatrixClientService } from "@/entities/matrix";
 import type { PcryptoRoomInstance } from "@/entities/matrix/model/matrix-crypto";
+import { useConnectivity } from "@/shared/lib/connectivity";
+import { enqueue, dequeue, getQueue } from "@/shared/lib/offline-queue";
+import type { QueuedMessage } from "@/shared/lib/offline-queue";
 
 export function useMessages() {
   const chatStore = useChatStore();
   const authStore = useAuthStore();
+  const { isOnline } = useConnectivity();
 
   /** Extract width/height from an image file */
   const getImageDimensions = (file: File): Promise<{ w: number; h: number }> => {
@@ -43,6 +47,13 @@ export function useMessages() {
     };
     chatStore.addMessage(roomId, message);
 
+    // If offline, queue the message for later
+    if (!isOnline.value) {
+      enqueue({ id: tempId, roomId, content: trimmed, timestamp: Date.now() });
+      chatStore.updateMessageStatus(roomId, tempId, MessageStatus.sent);
+      return;
+    }
+
     try {
       // Check if room has encryption
       const roomCrypto = authStore.pcrypto?.rooms[roomId] as PcryptoRoomInstance | undefined;
@@ -65,6 +76,38 @@ export function useMessages() {
       chatStore.updateMessageStatus(roomId, tempId, MessageStatus.failed);
     }
   };
+
+  /** Drain queued messages when coming back online */
+  const drainOfflineQueue = async () => {
+    const queue = getQueue();
+    if (queue.length === 0) return;
+    // Process one at a time
+    let msg: QueuedMessage | undefined;
+    while ((msg = dequeue())) {
+      try {
+        const matrixService = getMatrixClientService();
+        if (!matrixService.isReady()) break;
+        const roomCrypto = authStore.pcrypto?.rooms[msg.roomId] as PcryptoRoomInstance | undefined;
+        let serverEventId: string;
+        if (roomCrypto?.canBeEncrypt()) {
+          const encrypted = await roomCrypto.encryptEvent(msg.content);
+          serverEventId = await matrixService.sendEncryptedText(msg.roomId, encrypted);
+        } else {
+          serverEventId = await matrixService.sendText(msg.roomId, msg.content);
+        }
+        if (serverEventId) chatStore.updateMessageId(msg.roomId, msg.id, serverEventId);
+        chatStore.updateMessageStatus(msg.roomId, serverEventId || msg.id, MessageStatus.sent);
+      } catch (e) {
+        console.error("[offline-queue] Failed to send queued message:", e);
+        chatStore.updateMessageStatus(msg.roomId, msg.id, MessageStatus.failed);
+      }
+    }
+  };
+
+  // Listen for online event to drain queue
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", drainOfflineQueue);
+  }
 
   /** Send a file/image/video/audio message */
   const sendFile = async (file: File) => {
@@ -573,6 +616,7 @@ export function useMessages() {
 
   return {
     deleteMessage,
+    drainOfflineQueue,
     editMessage,
     forwardMessage,
     loadMessages,

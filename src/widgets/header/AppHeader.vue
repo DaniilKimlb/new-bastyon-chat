@@ -14,7 +14,7 @@ const navigate = (name: string) => {
     class="flex h-14 shrink-0 items-center justify-between border-b border-neutral-grad-0 bg-background-total-theme px-4"
   >
     <div class="flex items-center gap-3">
-      <span class="text-lg font-bold text-text-color">Bastyon Chat</span>
+      <span class="text-lg font-bold text-text-color"></span>
     </div>
 
     <nav class="flex items-center gap-2">
@@ -38,7 +38,10 @@ const navigate = (name: string) => {
       </button>
       <button
         class="rounded-lg px-3 py-1.5 text-sm text-color-bad hover:bg-neutral-grad-0"
-        @click="authStore.logout(); navigate('WelcomePage')"
+        @click="
+          authStore.logout();
+          navigate('WelcomePage');
+        "
       >
         Logout
       </button>

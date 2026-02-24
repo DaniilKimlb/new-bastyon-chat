@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { useContacts } from "../model/use-contacts";
+import { useChatStore } from "@/entities/chat";
+import type { ChatRoom } from "@/entities/chat";
 import { UserAvatar } from "@/entities/user";
+import { formatRelativeTime } from "@/shared/lib/format";
+import Avatar from "@/shared/ui/avatar/Avatar.vue";
 
 const { searchQuery, searchResults, isSearching, isCreatingRoom, debouncedSearch, getOrCreateRoom } = useContacts();
+const chatStore = useChatStore();
 
 const emit = defineEmits<{
   select: [address: string];
@@ -13,7 +18,7 @@ const handleInput = () => {
   debouncedSearch(searchQuery.value);
 };
 
-const handleSelect = async (address: string) => {
+const handleSelectUser = async (address: string) => {
   emit("select", address);
   const roomId = await getOrCreateRoom(address);
   if (roomId) {
@@ -22,13 +27,27 @@ const handleSelect = async (address: string) => {
     searchResults.value = [];
   }
 };
+
+const handleSelectRoom = (room: ChatRoom) => {
+  chatStore.setActiveRoom(room.id);
+  emit("roomCreated", room.id);
+  searchQuery.value = "";
+  searchResults.value = [];
+};
+
+/** Rooms matching the search query */
+const matchingRooms = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim();
+  if (!q) return [];
+  return chatStore.sortedRooms.filter(r => r.name.toLowerCase().includes(q));
+});
 </script>
 
 <template>
   <div class="flex flex-col gap-2">
     <input
       v-model="searchQuery"
-      placeholder="Search users..."
+      placeholder="Search chats or users..."
       class="rounded-lg bg-chat-input-bg px-3 py-2 text-sm text-text-color outline-none placeholder:text-neutral-grad-2"
       @input="handleInput"
     />
@@ -47,24 +66,62 @@ const handleSelect = async (address: string) => {
       Opening chat...
     </div>
 
-    <div v-else-if="searchQuery && searchResults.length === 0 && !isSearching" class="p-3 text-center text-sm text-text-on-main-bg-color">
-      No users found
-    </div>
+    <template v-else-if="searchQuery">
+      <!-- Matching chats section -->
+      <div v-if="matchingRooms.length" class="max-h-48 space-y-0.5 overflow-y-auto">
+        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-text-on-main-bg-color">Chats</div>
+        <button
+          v-for="room in matchingRooms"
+          :key="room.id"
+          class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-neutral-grad-0"
+          @click="handleSelectRoom(room)"
+        >
+          <UserAvatar
+            v-if="room.avatar?.startsWith('__pocketnet__:')"
+            :address="room.avatar.replace('__pocketnet__:', '')"
+            size="sm"
+          />
+          <Avatar v-else :src="room.avatar" :name="room.name" size="sm" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-sm font-medium text-text-color">{{ room.name }}</div>
+            <div class="truncate text-xs text-text-on-main-bg-color">
+              {{ room.lastMessage?.content || "" }}
+            </div>
+          </div>
+          <span
+            v-if="room.lastMessage"
+            class="shrink-0 text-[11px] text-text-on-main-bg-color"
+          >
+            {{ formatRelativeTime(new Date(room.lastMessage.timestamp)) }}
+          </span>
+        </button>
+      </div>
 
-    <div v-else-if="searchResults.length" class="max-h-64 space-y-0.5 overflow-y-auto">
-      <button
-        v-for="user in searchResults"
-        :key="user.address"
-        class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-neutral-grad-0"
-        :disabled="isCreatingRoom"
-        @click="handleSelect(user.address)"
+      <!-- User search results section -->
+      <div v-if="searchResults.length" class="max-h-48 space-y-0.5 overflow-y-auto">
+        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-text-on-main-bg-color">Users</div>
+        <button
+          v-for="user in searchResults"
+          :key="user.address"
+          class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-neutral-grad-0"
+          :disabled="isCreatingRoom"
+          @click="handleSelectUser(user.address)"
+        >
+          <UserAvatar :address="user.address" size="sm" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-sm font-medium text-text-color">{{ user.name }}</div>
+            <div class="truncate text-xs text-text-on-main-bg-color">{{ user.address }}</div>
+          </div>
+        </button>
+      </div>
+
+      <!-- No results -->
+      <div
+        v-if="!matchingRooms.length && !searchResults.length && !isSearching"
+        class="p-3 text-center text-sm text-text-on-main-bg-color"
       >
-        <UserAvatar :address="user.address" size="sm" />
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium text-text-color">{{ user.name }}</div>
-          <div class="truncate text-xs text-text-on-main-bg-color">{{ user.address }}</div>
-        </div>
-      </button>
-    </div>
+        No chats or users found
+      </div>
+    </template>
   </div>
 </template>

@@ -4,7 +4,7 @@ import { useUserStore } from "@/entities/user";
 import { useAuthStore } from "@/entities/auth";
 import { useChatStore } from "@/entities/chat";
 import { getMatrixClientService } from "@/entities/matrix";
-import { getmatrixid, hexEncode } from "@/shared/lib/matrix/functions";
+import { getmatrixid, hexEncode, tetatetid } from "@/shared/lib/matrix/functions";
 import { MATRIX_SERVER } from "@/shared/config";
 
 import type { User } from "@/entities/user";
@@ -71,7 +71,32 @@ export function useContacts() {
     debounceTimer = setTimeout(() => searchUsers(query), 300);
   };
 
-  /** Get or create a 1:1 room with the given address. Returns the room ID. */
+  /**
+   * Helper: activate a room after join/rejoin — clears deleted state, adds to store, sets active.
+   */
+  const activateRoom = (roomId: string, targetAddress: string, myHexId: string, targetHexId: string) => {
+    chatStore.clearDeletedRoom(roomId);
+    const targetUser = userStore.getUser(targetAddress);
+    chatStore.addRoom({
+      id: roomId,
+      name: targetUser?.name || targetAddress,
+      avatar: `__pocketnet__:${targetAddress}`,
+      unreadCount: 0,
+      members: [myHexId, targetHexId],
+      isGroup: false,
+      updatedAt: Date.now(),
+    });
+    chatStore.setActiveRoom(roomId);
+    chatStore.refreshRooms();
+  };
+
+  /**
+   * Get or create a 1:1 room with the given address.
+   * Uses deterministic room alias (tetatetid) matching bastyon-chat pattern:
+   * - Create room with room_alias_name = SHA-224 hash of both users' hex IDs
+   * - On M_ROOM_IN_USE (room was previously deleted/forgotten), rejoin via alias
+   * Returns the room ID.
+   */
   const getOrCreateRoom = async (targetAddress: string): Promise<string | null> => {
     isCreatingRoom.value = true;
     try {
@@ -79,77 +104,163 @@ export function useContacts() {
       const myUserId = matrixService.getUserId();
       if (!myUserId) return null;
 
-      const targetMatrixId = `@${hexEncode(targetAddress).toLowerCase()}:${MATRIX_SERVER}`;
-      const myRawId = getmatrixid(myUserId);
+      const targetHexId = hexEncode(targetAddress).toLowerCase();
+      const myHexId = getmatrixid(myUserId); // already hexEncode(addr).toLowerCase()
+      const targetMatrixId = `@${targetHexId}:${MATRIX_SERVER}`;
 
-      // Check existing rooms for a 1:1 with this user
-      const rooms = matrixService.getRooms() as Array<Record<string, unknown>>;
-      for (const room of rooms) {
+      // Compute deterministic alias for this 1:1 pair (same as bastyon-chat)
+      const alias = tetatetid(myHexId, targetHexId);
+      if (!alias) return null; // same user
+      const fullAlias = `#${alias}:${MATRIX_SERVER}`;
+
+      // Check existing local rooms for a 1:1 with this user (by alias/name match)
+      const localRooms = matrixService.getRooms() as Array<Record<string, unknown>>;
+      for (const room of localRooms) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const roomAny = room as any;
-        const members = (roomAny.getMembers?.() ?? roomAny.currentState?.getMembers?.() ?? []) as Array<{ userId: string }>;
-        if (members.length === 2) {
-          const memberIds = members.map(m => getmatrixid(m.userId));
-          const targetRawId = getmatrixid(targetMatrixId);
-          if (memberIds.includes(myRawId) && memberIds.includes(targetRawId)) {
-            const roomId = roomAny.roomId as string;
-            chatStore.setActiveRoom(roomId);
+        const canonicalAlias = (roomAny.getCanonicalAlias?.() ?? "") as string;
+        const roomName = (roomAny.name ?? "") as string;
+
+        if (canonicalAlias.includes(alias) || roomName === "#" + alias) {
+          const roomId = roomAny.roomId as string;
+          const membership = roomAny.selfMembership ?? roomAny.getMyMembership?.();
+
+          if (membership === "join") {
+            activateRoom(roomId, targetAddress, myHexId, targetHexId);
             return roomId;
           }
         }
       }
 
-      // Create new room — match bastyon-chat createRoom pattern
-      const result = await matrixService.createRoom({
-        visibility: "private",
-        invite: [targetMatrixId],
-        is_direct: true,
-        initial_state: [
-          {
-            type: "m.set.encrypted",
-            state_key: "",
-            content: { encrypted: true },
-          },
-        ],
-      });
+      // Try to create the room. On M_ROOM_IN_USE, fall through to rejoin.
+      try {
+        const result = await matrixService.createRoom({
+          room_alias_name: alias,
+          visibility: "private",
+          invite: [targetMatrixId],
+          name: "#" + alias,
+          initial_state: [
+            {
+              type: "m.set.encrypted",
+              state_key: "",
+              content: { encrypted: true },
+            },
+          ],
+        });
 
-      const roomId = result.room_id;
+        const roomId = result.room_id;
 
-      // Set equal power levels for the invited user
+        // Set equal power levels for the invited user
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const newRoom = matrixService.getRoom(roomId) as any;
+          if (newRoom) {
+            const powerEvent = newRoom.currentState?.getStateEvents?.("m.room.power_levels");
+            if (powerEvent?.length) {
+              await matrixService.setPowerLevel(roomId, targetMatrixId, 100, powerEvent[0]);
+            }
+          }
+        } catch { /* best-effort */ }
+
+        activateRoom(roomId, targetAddress, myHexId, targetHexId);
+        return roomId;
+      } catch (createErr) {
+        // Check for M_ROOM_IN_USE (alias already taken — room was previously deleted)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const errcode = (createErr as any)?.errcode ?? (createErr as any)?.data?.errcode;
+        if (errcode !== "M_ROOM_IN_USE") {
+          console.error("[useContacts] createRoom error:", createErr);
+          return null;
+        }
+        console.log("[useContacts] M_ROOM_IN_USE — rejoining via alias:", fullAlias);
+      }
+
+      // M_ROOM_IN_USE: room alias exists on server from a previously deleted chat.
+      // Strategy: try joinRoom first (works if the other user is still in the room).
+      // If joinRoom fails (room is empty / dead), try versioned aliases.
+
+      // Step 1: Try joinRoom via base alias (the other user may still be in the room)
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const newRoom = matrixService.getRoom(roomId) as any;
-        if (newRoom) {
-          const powerEvent = newRoom.currentState?.getStateEvents?.("m.room.power_levels");
-          if (powerEvent?.length) {
-            await matrixService.setPowerLevel(roomId, targetMatrixId, 100, powerEvent[0]);
+        const joinResult = await matrixService.joinRoom(fullAlias) as any;
+        const roomId = joinResult?.roomId ?? joinResult?.room_id ?? null;
+        console.log("[useContacts] joinRoom succeeded, roomId:", roomId);
+        if (roomId) {
+          activateRoom(roomId, targetAddress, myHexId, targetHexId);
+          return roomId;
+        }
+      } catch (joinErr) {
+        console.warn("[useContacts] joinRoom on base alias failed (room dead), trying versions:", joinErr);
+      }
+
+      // Step 2: Room is dead (everyone left). Try versioned aliases.
+      // Both users will iterate the same versions in order, so they'll converge.
+      for (let v = 2; v <= 10; v++) {
+        const vAlias = tetatetid(myHexId, targetHexId, v);
+        if (!vAlias) continue;
+        const vFullAlias = `#${vAlias}:${MATRIX_SERVER}`;
+
+        // Try joining first (the other user may have already created this version)
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const joinResult = await matrixService.joinRoom(vFullAlias) as any;
+          const roomId = joinResult?.roomId ?? joinResult?.room_id ?? null;
+          if (roomId) {
+            console.log("[useContacts] joined versioned room v%d, roomId: %s", v, roomId);
+            activateRoom(roomId, targetAddress, myHexId, targetHexId);
+            return roomId;
           }
+        } catch { /* version doesn't exist or is dead, try creating */ }
+
+        // Try creating with this version
+        try {
+          const result = await matrixService.createRoom({
+            room_alias_name: vAlias,
+            visibility: "private",
+            invite: [targetMatrixId],
+            name: "#" + vAlias,
+            initial_state: [
+              {
+                type: "m.set.encrypted",
+                state_key: "",
+                content: { encrypted: true },
+              },
+            ],
+          });
+
+          const roomId = result.room_id;
+          console.log("[useContacts] created versioned room v%d, roomId: %s", v, roomId);
+
+          // Set equal power levels
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const newRoom = matrixService.getRoom(roomId) as any;
+            if (newRoom) {
+              const powerEvent = newRoom.currentState?.getStateEvents?.("m.room.power_levels");
+              if (powerEvent?.length) {
+                await matrixService.setPowerLevel(roomId, targetMatrixId, 100, powerEvent[0]);
+              }
+            }
+          } catch { /* best-effort */ }
+
+          activateRoom(roomId, targetAddress, myHexId, targetHexId);
+          return roomId;
+        } catch (vErr) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const vErrcode = (vErr as any)?.errcode ?? (vErr as any)?.data?.errcode;
+          if (vErrcode === "M_ROOM_IN_USE") {
+            // This version is also stuck, try next
+            console.log("[useContacts] version %d also in use, trying next", v);
+            continue;
+          }
+          console.error("[useContacts] createRoom v%d failed:", v, vErr);
+          return null;
         }
-      } catch {
-        // Power level setting is best-effort
       }
 
-      // Refresh rooms so the new room appears in the list
-      chatStore.refreshRooms();
-      chatStore.setActiveRoom(roomId);
-
-      return roomId;
-    } catch (e: unknown) {
-      // If room already exists (M_ROOM_IN_USE), try to find and join it
-      const err = e as { errcode?: string };
-      if (err?.errcode === "M_ROOM_IN_USE") {
-        // Room exists — refresh and find it
-        await chatStore.refreshRooms();
-        const targetRawId = getmatrixid(`@${hexEncode(targetAddress).toLowerCase()}:${MATRIX_SERVER}`);
-        const existingRoom = chatStore.sortedRooms.find(r => {
-          // Check if room name contains the target address or avatar matches
-          return r.avatar === `__pocketnet__:${targetRawId}`;
-        });
-        if (existingRoom) {
-          chatStore.setActiveRoom(existingRoom.id);
-          return existingRoom.id;
-        }
-      }
+      console.error("[useContacts] exhausted all alias versions");
+      return null;
+    } catch (e) {
       console.error("[useContacts] getOrCreateRoom error:", e);
       return null;
     } finally {

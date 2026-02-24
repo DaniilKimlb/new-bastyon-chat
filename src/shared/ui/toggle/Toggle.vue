@@ -27,7 +27,7 @@ const toggle = () => {
     role="switch"
     :aria-checked="modelValue"
     :disabled="disabled"
-    class="relative inline-flex shrink-0 cursor-pointer rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-color-bg-ac"
+    class="relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-color-bg-ac"
     :class="[
       modelValue ? 'bg-color-bg-ac' : 'bg-neutral-grad-2',
       disabled ? 'cursor-not-allowed opacity-50' : '',
@@ -42,7 +42,6 @@ const toggle = () => {
         modelValue
           ? size === 'sm' ? 'translate-x-4' : 'translate-x-5'
           : 'translate-x-0.5',
-        'mt-0.5',
       ]"
     />
   </button>

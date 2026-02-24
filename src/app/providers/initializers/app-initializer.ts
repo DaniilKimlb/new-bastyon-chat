@@ -6,11 +6,18 @@ import { PocketnetInstance } from "../chat-scripts/config/pocketnetinstance";
 type OnLoadUserData = (userData: UserData) => void;
 
 export class AppInitializer {
-  private actions!: InstanceType<typeof Actions>;
-  private api!: InstanceType<typeof Api>;
-  private psdk!: InstanceType<typeof pSDK>;
+  private actions: InstanceType<typeof Actions> | null = null;
+  private api: InstanceType<typeof Api> | null = null;
+  private psdk: InstanceType<typeof pSDK> | null = null;
+  private _available = false;
 
   constructor(pocketnetInstance: PocketnetInstanceType) {
+    // Api / Actions / pSDK are globals injected by Bastyon platform scripts.
+    // In standalone (Electron) mode they don't exist — run in degraded mode.
+    if (typeof Api === "undefined" || typeof Actions === "undefined" || typeof pSDK === "undefined") {
+      console.warn("[AppInitializer] Platform globals not available — running in standalone mode");
+      return;
+    }
     this.api = new Api(pocketnetInstance);
     this.actions = new Actions(pocketnetInstance, this.api);
     this.actions.init();
@@ -19,14 +26,16 @@ export class AppInitializer {
       api: this.api,
       app: pocketnetInstance
     });
+    this._available = true;
   }
 
   private syncNodeTime() {
+    if (!this.api || !this.actions) return Promise.resolve();
     return this.api.rpc("getnodeinfo").then(getnodeinfoResult => {
       const timeDifference =
         getnodeinfoResult.time - Math.floor(new Date().getTime() / 1000);
       PocketnetInstanceConfigurator.setTimeDifference(timeDifference);
-      this.actions.prepare();
+      this.actions!.prepare();
     });
   }
 
@@ -37,6 +46,7 @@ export class AppInitializer {
     address: string;
     userData: UserData;
   }) {
+    if (!this.actions) return null;
     const userInfo = new UserInfo();
     userInfo.name.set(superXSS(userData.name));
     userInfo.language.set(superXSS(userData.language));
@@ -51,15 +61,17 @@ export class AppInitializer {
   }
 
   initApi() {
+    if (!this.api) return Promise.resolve();
     return this.api.initIf();
   }
 
   initializeAndFetchUserData(address: string, onLoad?: OnLoadUserData) {
+    if (!this._available) return Promise.resolve(null);
     return this.initApi().then(() => {
       return this.waitForApiReady().then(canUse => {
         if (canUse) {
           this.syncNodeTime();
-          this.actions.addAccount(address);
+          this.actions!.addAccount(address);
           return this.loadUserData([address], onLoad);
         }
         return null;
@@ -71,29 +83,28 @@ export class AppInitializer {
     stateAddresses: string[],
     onLoad?: OnLoadUserData
   ): Promise<UserData | null> {
-    if (stateAddresses.length) {
-      return this.psdk.userInfo.load(stateAddresses).then(() => {
-        const userData = this.psdk.userInfo.get(stateAddresses[0]) as UserData;
-        if (onLoad) {
-          onLoad(userData);
-        }
-        return userData;
-      });
-    }
-    return Promise.resolve(null);
+    if (!this.psdk || !stateAddresses.length) return Promise.resolve(null);
+    return this.psdk.userInfo.load(stateAddresses).then(() => {
+      const userData = this.psdk!.userInfo.get(stateAddresses[0]) as UserData;
+      if (onLoad) {
+        onLoad(userData);
+      }
+      return userData;
+    });
   }
 
   /** Load user info for multiple addresses (for encryption key resolution).
    *  Original bastyon-chat uses light=true: psdk.userInfo.load(addresses, true, reload)
    *  This uses userInfoLight storage, queue-based processing, and maxcount=70. */
   async loadUsersInfo(addresses: string[]): Promise<void> {
-    if (!addresses.length) return;
+    if (!this.psdk || !addresses.length) return;
     // Must pass light=true to match original bastyon-chat behavior
     await this.psdk.userInfo.load(addresses, true);
   }
 
   /** Get cached user data by raw address */
   getUserData(address: string): UserData | null {
+    if (!this.psdk) return null;
     try {
       return this.psdk.userInfo.get(address) as UserData | null;
     } catch {
@@ -104,7 +115,7 @@ export class AppInitializer {
   /** Get RAW user profiles via RPC — preserves all fields including numeric `id`.
    *  Must pass '1' as second param (light mode) to match SDK behavior. */
   async loadUsersInfoRaw(addresses: string[]): Promise<Record<string, unknown>[]> {
-    if (!addresses.length) return [];
+    if (!this.api || !addresses.length) return [];
     try {
       // Match SDK: api.rpc('getuserprofile', [addresses, '1'])
       const data = await this.api.rpc("getuserprofile", [addresses, "1"]);
@@ -117,6 +128,7 @@ export class AppInitializer {
 
   /** Search Pocketnet users by text query — calls "searchusers" RPC */
   async searchUsers(query: string): Promise<Array<{ address: string; name: string; image: string }>> {
+    if (!this.api) return [];
     try {
       await this.initApi();
       const data = await this.api.rpc("searchusers", [query, "users"]);
@@ -133,8 +145,9 @@ export class AppInitializer {
   }
 
   waitForApiReady() {
+    if (!this.api) return Promise.resolve(false);
     return this.api.wait.ready("use", 1000).then(() => {
-      return this.api.ready.use;
+      return this.api!.ready.use;
     });
   }
 }

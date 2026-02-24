@@ -1,8 +1,9 @@
 import { getMatrixClientService } from "@/entities/matrix";
 import type { MatrixKit } from "@/entities/matrix";
 import type { Pcrypto, PcryptoRoomInstance } from "@/entities/matrix/model/matrix-crypto";
-import { getmatrixid } from "@/shared/lib/matrix/functions";
+import { getmatrixid, hexEncode, hexDecode } from "@/shared/lib/matrix/functions";
 import { matrixIdToAddress, messageTypeFromMime, parseFileInfo } from "../lib/chat-helpers";
+import { cacheRooms, getCachedRooms, cacheMessages, getCachedMessages } from "@/shared/lib/cache/chat-cache";
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef, triggerRef } from "vue";
 
@@ -21,12 +22,22 @@ function getRawEvent(matrixEvent: any): Record<string, unknown> | null {
   return null;
 }
 
+/** Check if a string looks like a proper human-readable name (not a hash, hex ID, or raw address) */
+function looksLikeProperName(name: string, rawAddress?: string): boolean {
+  if (!name || name.length < 2) return false;
+  if (name.startsWith("#") || name.startsWith("!") || name.startsWith("@")) return false;
+  if (/^[a-f0-9]+$/i.test(name)) return false; // hex string
+  if (rawAddress && name === rawAddress) return false; // same as raw Bastyon address
+  return true;
+}
+
 /** Convert a Matrix SDK room object into our ChatRoom type */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): ChatRoom {
+function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string, nameHints?: Record<string, string>): ChatRoom {
   const roomId = room.roomId as string;
   const name = (room.name as string) ?? roomId;
   const isGroup = !kit.isTetatetChat(room);
+  const membership = (room.selfMembership ?? room.getMyMembership?.()) as "join" | "invite" | undefined;
 
   // Get members
   const members = kit.getRoomMembers(room);
@@ -99,13 +110,19 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
   // Resolve display name
   let displayName = name;
   if (!isGroup) {
-    // 1:1 chat: use the other member's rawDisplayName
+    // 1:1 chat: use the other member's rawDisplayName, then nameHints (user store), then address
     const otherMember = members.find(
       (m: Record<string, unknown>) => getmatrixid(m.userId as string) !== getmatrixid(myUserId)
     );
-    displayName = (otherMember?.rawDisplayName as string)
-      || (otherMember?.name as string)
-      || (otherMember ? matrixIdToAddress(otherMember.userId as string) : null)
+    const otherAddress = otherMember ? matrixIdToAddress(otherMember.userId as string) : null;
+    const rawDN = (otherMember?.rawDisplayName as string) || "";
+    const memberName = (otherMember?.name as string) || "";
+    // rawDisplayName might be a hex ID — only use it if it looks human-readable
+    const isHumanName = (s: string) => !!s && !/^[a-f0-9]{20,}$/i.test(s) && !s.startsWith("@");
+    displayName = (isHumanName(rawDN) ? rawDN : null)
+      || (isHumanName(memberName) ? memberName : null)
+      || (otherAddress && nameHints?.[otherAddress])
+      || otherAddress
       || name;
   } else if (name.startsWith("#") && name.length > 20) {
     // Group with auto-generated hash name: build from member display names
@@ -128,12 +145,13 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
       avatar = `__pocketnet__:${matrixIdToAddress(otherMember.userId as string)}`;
     }
   } else {
-    // Group: try to get room avatar from Matrix state
+    // Group: try to get room avatar from Matrix state, convert mxc:// to HTTP
     try {
       const avatarEvent = room.currentState?.getStateEvents?.("m.room.avatar", "");
       const avatarUrl = avatarEvent?.getContent?.()?.url ?? avatarEvent?.event?.content?.url;
       if (avatarUrl && typeof avatarUrl === "string") {
-        avatar = avatarUrl;
+        const matrixService = getMatrixClientService();
+        avatar = matrixService.mxcToHttp(avatarUrl) ?? avatarUrl;
       }
     } catch { /* ignore */ }
   }
@@ -147,6 +165,7 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string): Chat
     members: memberIds,
     isGroup,
     updatedAt: lastTs || 0,
+    membership: membership === "invite" ? "invite" : "join",
   };
 }
 
@@ -164,11 +183,23 @@ export const useChatStore = defineStore(NAMESPACE, () => {
   // User display name cache: address → display name
   const userDisplayNames = ref<Record<string, string>>({});
 
-  /** Look up a user's display name; falls back to truncated address */
+  /** Look up a user's display name; falls back to truncated address.
+   *  Accepts both raw Bastyon addresses and hex-encoded IDs (from room.members). */
   const getDisplayName = (address: string): string => {
     if (!address) return "?";
+    // Direct lookup (raw address)
     const cached = userDisplayNames.value[address];
     if (cached) return cached;
+    // Try hex-decoded lookup (room.members stores hex IDs, cache uses raw addresses)
+    if (/^[a-f0-9]+$/i.test(address)) {
+      try {
+        const decoded = hexDecode(address);
+        if (decoded !== address) {
+          const decodedCached = userDisplayNames.value[decoded];
+          if (decodedCached) return decodedCached;
+        }
+      } catch { /* not a valid hex string */ }
+    }
     // Fallback: truncated address
     if (address.length > 16) return address.slice(0, 8) + "\u2026" + address.slice(-4);
     return address;
@@ -271,9 +302,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
   const sortedRooms = computed(() =>
     [...rooms.value].sort((a, b) => {
+      // Pinned rooms first
       const aPinned = pinnedRoomIds.value.has(a.id) ? 1 : 0;
       const bPinned = pinnedRoomIds.value.has(b.id) ? 1 : 0;
       if (aPinned !== bPinned) return bPinned - aPinned;
+      // Invitations above regular rooms
+      const aInvite = a.membership === "invite" ? 1 : 0;
+      const bInvite = b.membership === "invite" ? 1 : 0;
+      if (aInvite !== bInvite) return bInvite - aInvite;
       return b.updatedAt - a.updatedAt;
     })
   );
@@ -302,7 +338,17 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matrixRooms = matrixService.getRooms() as any[];
 
+    // Preserve existing room data — addRoom may have set good names that Matrix can't resolve yet
+    // (e.g., invited user's display name isn't available in Matrix state right after room creation)
+    const prevNameMap = new Map(rooms.value.map(r => [r.id, r.name]));
+    const prevActiveRoom = activeRoomId.value
+      ? rooms.value.find(r => r.id === activeRoomId.value)
+      : undefined;
+
     const interactiveRooms = matrixRooms.filter((r) => {
+      // Skip rooms that were deleted locally (leave/forget in progress)
+      if (deletedRoomIds.value.has(r.roomId as string)) return false;
+
       const membership = r.selfMembership ?? r.getMyMembership?.();
       if (membership !== "join" && membership !== "invite") return false;
 
@@ -314,8 +360,12 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       } catch { /* ignore */ }
 
       // Filter rooms with no other members (self-only rooms)
+      // Invited rooms always pass — the invitee hasn't joined yet so memberCount is low
+      if (membership === "invite") return true;
       const memberCount = r.getJoinedMemberCount?.() ?? r.currentState?.getJoinedMemberCount?.() ?? 0;
       if (memberCount < 2) {
+        // Always keep the active room (e.g. just-created room before invite accepted)
+        if (r.roomId === activeRoomId.value) return true;
         // Keep rooms that have timeline events (could be an old chat where other member left)
         const hasTimeline = (r.timeline?.length ?? 0) > 0 ||
           (r.getLiveTimeline?.()?.getEvents?.()?.length ?? 0) > 0;
@@ -327,9 +377,24 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
     rooms.value = interactiveRooms
       .map((r) => {
-        const chatRoom = matrixRoomToChatRoom(r, kit, myUserId);
+        const chatRoom = matrixRoomToChatRoom(r, kit, myUserId, userDisplayNames.value);
         // Preserve unreadCount=0 for active room — SDK hasn't processed the read receipt yet
         if (chatRoom.id === activeRoomId.value) chatRoom.unreadCount = 0;
+
+        // For 1:1 chats: if resolved name is not human-readable (hash/hex/address),
+        // try using the previously known name (set by addRoom from user store).
+        if (!chatRoom.isGroup) {
+          const addr = chatRoom.avatar?.startsWith("__pocketnet__:")
+            ? chatRoom.avatar.slice("__pocketnet__:".length)
+            : undefined;
+          if (!looksLikeProperName(chatRoom.name, addr)) {
+            const prevName = prevNameMap.get(chatRoom.id);
+            if (prevName && looksLikeProperName(prevName, addr)) {
+              chatRoom.name = prevName;
+            }
+          }
+        }
+
         // If we already have loaded messages for this room, use the latest as preview.
         // This avoids "[encrypted]" for our own optimistic messages that are plaintext.
         const loadedMsgs = messages.value[chatRoom.id];
@@ -339,8 +404,13 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         }
         return chatRoom;
       })
-      // Filter out rooms with no messages
-      .filter((r) => r.lastMessage !== undefined);
+      // Filter out rooms with no messages (but always keep active room, invited rooms, and groups)
+      .filter((r) => r.lastMessage !== undefined || r.id === activeRoomId.value || r.membership === "invite" || r.isGroup);
+
+    // If the active room was lost during rebuild (SDK hasn't synced yet), re-add from previous state
+    if (prevActiveRoom && !rooms.value.some(r => r.id === prevActiveRoom.id)) {
+      rooms.value.push(prevActiveRoom);
+    }
 
     // Build user display name cache from room members
     for (const r of interactiveRooms) {
@@ -357,6 +427,9 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
     // Decrypt [encrypted] previews asynchronously
     decryptRoomPreviews(interactiveRooms);
+
+    // Fire-and-forget: cache rooms to IndexedDB for instant load on next visit
+    cacheRooms(rooms.value).catch(() => {});
   };
 
   /** Decrypt last-message previews for rooms that show [encrypted] */
@@ -397,33 +470,103 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
+  // Pending read receipt: sent when tab becomes visible
+  let pendingReadReceipt: { roomId: string; event: unknown } | null = null;
+
+  const sendReadReceiptIfVisible = (roomId: string, event: unknown) => {
+    if (document.visibilityState === "visible") {
+      try {
+        const matrixService = getMatrixClientService();
+        matrixService.sendReadReceipt(event);
+      } catch (e) {
+        console.warn("[chat-store] sendReadReceipt error:", e);
+      }
+    } else {
+      pendingReadReceipt = { roomId, event };
+    }
+  };
+
+  // Listen for visibility changes to send pending read receipts
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && pendingReadReceipt) {
+        const { event } = pendingReadReceipt;
+        pendingReadReceipt = null;
+        try {
+          const matrixService = getMatrixClientService();
+          matrixService.sendReadReceipt(event);
+        } catch (e) {
+          console.warn("[chat-store] deferred sendReadReceipt error:", e);
+        }
+      }
+    });
+  }
+
   const setActiveRoom = (roomId: string | null) => {
     activeRoomId.value = roomId;
     if (roomId) {
       const room = rooms.value.find((r) => r.id === roomId);
       if (room) room.unreadCount = 0;
 
-      // Send read receipt for last event in the room
+      // Don't auto-join invited rooms — let the user preview first
+      if (room?.membership === "invite") return;
+
+      // Send read receipt for last event in the room (only if tab is visible)
       try {
         const matrixService = getMatrixClientService();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const matrixRoom = matrixService.getRoom(roomId) as any;
         if (matrixRoom) {
           const events = matrixRoom.timeline ?? matrixRoom.getLiveTimeline?.()?.getEvents?.() ?? [];
-          console.log("[chat-store] setActiveRoom: sending read receipt, events count=%d", events.length);
           if (events.length > 0) {
             const lastEvent = events[events.length - 1];
-            console.log("[chat-store] setActiveRoom: last event id=%s type=%s", lastEvent?.event?.event_id, lastEvent?.event?.type);
-            matrixService.sendReadReceipt(lastEvent);
+            sendReadReceiptIfVisible(roomId, lastEvent);
           }
-        } else {
-          console.log("[chat-store] setActiveRoom: no matrixRoom found");
         }
       } catch (e) {
         console.warn("[chat-store] sendReadReceipt error:", e);
       }
     }
   };
+
+  /** Accept an invite: join the room and update membership */
+  const acceptInvite = async (roomId: string) => {
+    try {
+      const matrixService = getMatrixClientService();
+      await matrixService.joinRoom(roomId);
+
+      // Update local membership to "join"
+      const room = rooms.value.find((r) => r.id === roomId);
+      if (room) room.membership = "join";
+
+      // Refresh to get full room data now that we're a member
+      refreshRooms();
+    } catch (e) {
+      console.warn("[chat-store] acceptInvite error:", e);
+    }
+  };
+
+  /** Decline an invite: leave the room and remove from list */
+  const declineInvite = async (roomId: string) => {
+    // Mark as deleted so refreshRooms won't re-add
+    deletedRoomIds.value = new Set([...deletedRoomIds.value, roomId]);
+
+    // Optimistic: remove from UI
+    rooms.value = rooms.value.filter((r) => r.id !== roomId);
+    if (activeRoomId.value === roomId) activeRoomId.value = null;
+
+    try {
+      const matrixService = getMatrixClientService();
+      await matrixService.leaveRoom(roomId);
+    } catch (e) {
+      console.warn("[chat-store] declineInvite error:", e);
+    }
+  };
+
+  /** Count of rooms with pending invitations */
+  const inviteCount = computed(() =>
+    rooms.value.filter((r) => r.membership === "invite").length
+  );
 
   const addRoom = (room: ChatRoom) => {
     const existing = rooms.value.findIndex((r) => r.id === room.id);
@@ -434,11 +577,155 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
-  const removeRoom = (roomId: string) => {
+  // Client-side deleted rooms set (matches bastyon-chat's deletedrooms map).
+  // Prevents refreshRooms from re-adding a room before the server sync catches up.
+  const deletedRoomIds = ref<Set<string>>(new Set());
+
+  /** Remove a room: kick other members → leave → forget → remove from local state.
+   *  Kicks all other joined members so the chat disappears for everyone (both 1:1 and groups). */
+  const removeRoom = async (roomId: string) => {
+    // Mark as deleted so refreshRooms won't re-add it
+    deletedRoomIds.value = new Set([...deletedRoomIds.value, roomId]);
+
+    // Optimistic: remove from UI immediately
     rooms.value = rooms.value.filter((r) => r.id !== roomId);
     delete messages.value[roomId];
     if (activeRoomId.value === roomId) {
       activeRoomId.value = null;
+    }
+
+    // Server: kick all other members → leave → forget
+    try {
+      const matrixService = getMatrixClientService();
+
+      // Kick all other joined members before leaving (works for both 1:1 and groups)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const matrixRoom = matrixService.getRoom(roomId) as any;
+        if (matrixRoom) {
+          const myUserId = matrixService.getUserId();
+          const joinedMembers = matrixRoom.getJoinedMembers?.() ?? [];
+          for (const member of joinedMembers) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const memberId = (member as any).userId as string;
+            if (memberId !== myUserId) {
+              try {
+                await matrixService.kick(roomId, memberId);
+                console.log("[chat-store] removeRoom: kicked", memberId);
+              } catch (kickErr) {
+                console.warn("[chat-store] removeRoom: kick failed for", memberId, kickErr);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[chat-store] removeRoom kick members error:", e);
+      }
+
+      await matrixService.leaveRoom(roomId);
+      await matrixService.forgetRoom(roomId);
+    } catch (e) {
+      console.warn("[chat-store] removeRoom leave/forget error:", e);
+    }
+  };
+
+  /** Leave a group chat without kicking other members. */
+  const leaveGroup = async (roomId: string) => {
+    deletedRoomIds.value = new Set([...deletedRoomIds.value, roomId]);
+
+    // Optimistic: remove from UI
+    rooms.value = rooms.value.filter((r) => r.id !== roomId);
+    delete messages.value[roomId];
+    if (activeRoomId.value === roomId) {
+      activeRoomId.value = null;
+    }
+
+    try {
+      const matrixService = getMatrixClientService();
+      await matrixService.leaveRoom(roomId);
+      await matrixService.forgetRoom(roomId);
+    } catch (e) {
+      console.warn("[chat-store] leaveGroup error:", e);
+    }
+  };
+
+  /** Kick a single user from a room (requires admin power level).
+   *  @param address — raw Bastyon address (will be hex-encoded for Matrix ID) */
+  const kickMember = async (roomId: string, address: string): Promise<boolean> => {
+    try {
+      const matrixService = getMatrixClientService();
+      const hexId = hexEncode(address).toLowerCase();
+      const targetMatrixId = matrixService.matrixId(hexId);
+      await matrixService.kick(roomId, targetMatrixId);
+
+      // Optimistic: remove member from local room data immediately
+      const room = rooms.value.find(r => r.id === roomId);
+      if (room) {
+        room.members = room.members.filter(m => m !== hexId);
+      }
+
+      return true;
+    } catch (e) {
+      console.warn("[chat-store] kickMember error:", e);
+      return false;
+    }
+  };
+
+  /** Set power level for a user in a room */
+  const setMemberPowerLevel = async (roomId: string, address: string, level: number): Promise<boolean> => {
+    try {
+      const matrixService = getMatrixClientService();
+      const targetMatrixId = matrixService.matrixId(hexEncode(address).toLowerCase());
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const matrixRoom = matrixService.getRoom(roomId) as any;
+      if (!matrixRoom) return false;
+      const powerEvent = matrixRoom.currentState?.getStateEvents?.("m.room.power_levels");
+      if (!powerEvent?.length) return false;
+      await matrixService.setPowerLevel(roomId, targetMatrixId, level, powerEvent[0]);
+      return true;
+    } catch (e) {
+      console.warn("[chat-store] setMemberPowerLevel error:", e);
+      return false;
+    }
+  };
+
+  /** Invite a user to a room */
+  const inviteMember = async (roomId: string, address: string): Promise<boolean> => {
+    try {
+      const matrixService = getMatrixClientService();
+      const hexId = hexEncode(address).toLowerCase();
+      const targetMatrixId = matrixService.matrixId(hexId);
+      await matrixService.invite(roomId, targetMatrixId);
+
+      // Optimistic: add member to local room data immediately
+      const room = rooms.value.find(r => r.id === roomId);
+      if (room && !room.members.includes(hexId)) {
+        room.members = [...room.members, hexId];
+      }
+
+      return true;
+    } catch (e) {
+      console.warn("[chat-store] inviteMember error:", e);
+      return false;
+    }
+  };
+
+  /** Get power levels for a room. Returns map of matrixId → power level. */
+  const getRoomPowerLevels = (roomId: string): { myLevel: number; levels: Record<string, number> } => {
+    try {
+      const matrixService = getMatrixClientService();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const matrixRoom = matrixService.getRoom(roomId) as any;
+      if (!matrixRoom) return { myLevel: 0, levels: {} };
+      const powerEvent = matrixRoom.currentState?.getStateEvents?.("m.room.power_levels", "");
+      const content = powerEvent?.getContent?.() ?? powerEvent?.event?.content ?? {};
+      const users = (content.users ?? {}) as Record<string, number>;
+      const defaultLevel = (content.users_default ?? 0) as number;
+      const myUserId = matrixService.getUserId() ?? "";
+      const myLevel = users[myUserId] ?? defaultLevel;
+      return { myLevel, levels: users };
+    } catch {
+      return { myLevel: 0, levels: {} };
     }
   };
 
@@ -783,7 +1070,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
       // Paginate backwards to load message history
       try {
-        await matrixService.scrollback(roomId, 50);
+        await matrixService.scrollback(roomId, 25);
       } catch (e) {
         console.warn("[chat-store] scrollback failed:", e);
       }
@@ -797,10 +1084,48 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       applyExistingReceipts(matrixRoom, timelineEvents, msgs, matrixService.getUserId());
 
       setMessages(roomId, msgs);
+
+      // Fire-and-forget: cache messages to IndexedDB
+      cacheMessages(roomId, msgs).catch(() => {});
     } catch (e) {
       console.error("[chat-store] loadRoomMessages fatal error for room %s:", roomId, e);
       // Set empty messages so UI doesn't hang
       setMessages(roomId, []);
+    }
+  };
+
+  /** Load more (older) messages for a room. Returns false if no more available. */
+  const loadMoreMessages = async (roomId: string): Promise<boolean> => {
+    try {
+      const matrixService = getMatrixClientService();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const matrixRoom = matrixService.getRoom(roomId) as any;
+      if (!matrixRoom) return false;
+
+      const prevCount = getTimelineEvents(matrixRoom).length;
+
+      try {
+        await matrixService.scrollback(roomId, 25);
+      } catch (e) {
+        console.warn("[chat-store] loadMoreMessages scrollback failed:", e);
+        return false;
+      }
+
+      const newCount = getTimelineEvents(matrixRoom).length;
+      if (newCount <= prevCount) return false; // no more messages
+
+      const timelineEvents = getTimelineEvents(matrixRoom);
+      const msgs = await parseTimelineEvents(timelineEvents, roomId);
+      applyExistingReceipts(matrixRoom, timelineEvents, msgs, matrixService.getUserId());
+      setMessages(roomId, msgs);
+
+      // Fire-and-forget: cache messages to IndexedDB
+      cacheMessages(roomId, msgs).catch(() => {});
+
+      return true;
+    } catch (e) {
+      console.error("[chat-store] loadMoreMessages error:", e);
+      return false;
     }
   };
 
@@ -995,12 +1320,9 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
       addMessage(roomId, message);
 
-      // Auto-send read receipt if this room is currently active
+      // Auto-send read receipt if this room is currently active (visibility-aware)
       if (roomId === activeRoomId.value) {
-        try {
-          const matrixService = getMatrixClientService();
-          matrixService.sendReadReceipt(event);
-        } catch { /* ignore */ }
+        sendReadReceiptIfVisible(roomId, event);
       }
 
       // Also refresh rooms list to update sidebar
@@ -1162,6 +1484,50 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     triggerRef(messages);
   };
 
+  /** Handle being kicked/banned from a room — remove it from UI immediately */
+  const handleKicked = (roomId: string) => {
+    rooms.value = rooms.value.filter((r) => r.id !== roomId);
+    delete messages.value[roomId];
+    if (activeRoomId.value === roomId) {
+      activeRoomId.value = null;
+    }
+  };
+
+  /** Remove a room from the deletedRoomIds set (used when rejoining a previously-deleted room) */
+  const clearDeletedRoom = (roomId: string) => {
+    if (deletedRoomIds.value.has(roomId)) {
+      const next = new Set(deletedRoomIds.value);
+      next.delete(roomId);
+      deletedRoomIds.value = next;
+    }
+  };
+
+  /** Load rooms from IndexedDB cache for instant display before Matrix sync */
+  const loadCachedRooms = async () => {
+    if (rooms.value.length > 0) return; // already have rooms from Matrix
+    try {
+      const cached = await getCachedRooms();
+      if (cached.length > 0 && rooms.value.length === 0) {
+        rooms.value = cached as ChatRoom[];
+      }
+    } catch (e) {
+      console.warn("[chat-store] loadCachedRooms failed:", e);
+    }
+  };
+
+  /** Load cached messages for a room from IndexedDB (used as instant preview) */
+  const loadCachedMessages = async (roomId: string) => {
+    if (messages.value[roomId]?.length) return; // already have messages
+    try {
+      const cached = await getCachedMessages(roomId);
+      if (cached.length > 0 && !messages.value[roomId]?.length) {
+        messages.value[roomId] = cached as Message[];
+      }
+    } catch (e) {
+      console.warn("[chat-store] loadCachedMessages failed:", e);
+    }
+  };
+
   return {
     activeMediaMessages,
     activeMessages,
@@ -1169,16 +1535,25 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     activeRoomId,
     addMessage,
     addRoom,
+    clearDeletedRoom,
     deletingMessage,
     editingMessage,
     enterSelectionMode,
     exitSelectionMode,
     forwardingMessages,
     getDisplayName,
+    getRoomPowerLevels,
     getTypingUsers,
+    handleKicked,
     handleReceiptEvent,
     handleRedactionEvent,
     handleTimelineEvent,
+    inviteMember,
+    kickMember,
+    leaveGroup,
+    loadCachedMessages,
+    loadCachedRooms,
+    loadMoreMessages,
     loadRoomMessages,
     markRoomAsRead,
     messages,
@@ -1198,8 +1573,12 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     rooms,
     selectedMessageIds,
     selectionMode,
+    acceptInvite,
+    declineInvite,
+    inviteCount,
     setActiveRoom,
     setHelpers,
+    setMemberPowerLevel,
     setMessages,
     setTypingUsers,
     sortedRooms,

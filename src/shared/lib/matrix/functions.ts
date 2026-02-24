@@ -54,6 +54,27 @@ export function getmatrixid(str: string | undefined | null): string {
   return str?.split(":")[0]?.replace("@", "") ?? "";
 }
 
+/**
+ * Compute a deterministic room alias for a 1:1 chat between two users.
+ * Ported from bastyon-chat mtrxkit.tetatetid().
+ * Both users always get the same hash (multiplication is commutative).
+ * @param user1Id — hex-encoded Pocketnet address
+ * @param user2Id — hex-encoded Pocketnet address
+ * @returns SHA-224 hex hash, or null if same user
+ */
+const tetatetCache: Record<string, string> = {};
+export function tetatetid(user1Id: string, user2Id: string, version?: number): string | null {
+  if (user1Id === user2Id) return null;
+  const seed = 2;
+  const baseNum = parseInt(user1Id, 16) * parseInt(user2Id, 16) * seed;
+  let key = baseNum.toString();
+  if (version) key += "-" + version;
+  if (tetatetCache[key]) return tetatetCache[key];
+  const hash = sha224(key).toString("hex");
+  tetatetCache[key] = hash;
+  return hash;
+}
+
 export function getmatrixidFA(str: string | undefined | null): string {
   return str?.split(":")[0] ?? "";
 }

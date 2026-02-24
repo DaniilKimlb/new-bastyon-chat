@@ -5,6 +5,7 @@ import { useChatStore } from "@/entities/chat";
 const emit = defineEmits<{
   close: [];
   scrollTo: [messageId: string];
+  "update:query": [query: string];
 }>();
 
 const chatStore = useChatStore();
@@ -19,6 +20,7 @@ watch(query, (val) => {
   debounceTimer = setTimeout(() => {
     debouncedQuery.value = val;
     currentIndex.value = 0;
+    emit("update:query", val);
   }, 200);
 });
 
@@ -72,6 +74,7 @@ onMounted(() => {
       placeholder="Search in chat..."
       class="flex-1 bg-transparent text-sm text-text-color outline-none placeholder:text-neutral-grad-2"
       @keydown.enter="goNext"
+      @keydown.escape="emit('close')"
     />
 
     <span v-if="debouncedQuery" class="shrink-0 text-xs text-text-on-main-bg-color">

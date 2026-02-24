@@ -227,6 +227,18 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
         onMembership: () => {
           chatStore.refreshRooms();
         },
+        onMyMembership: (_room: unknown, membership: string, prevMembership: string | undefined) => {
+          // When kicked/banned from a room, remove it immediately from the UI
+          if (prevMembership === "join" && (membership === "leave" || membership === "ban")) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const roomId = (_room as any)?.roomId as string;
+            if (roomId) {
+              console.log("[auth] myMembership: kicked from room", roomId);
+              chatStore.handleKicked(roomId);
+            }
+          }
+          chatStore.refreshRooms();
+        },
         onReceipt: (event: unknown, room: unknown) => {
           chatStore.handleReceiptEvent(event, room);
         },

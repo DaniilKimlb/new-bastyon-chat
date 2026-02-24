@@ -24,6 +24,7 @@ export type MembershipCallback = (event: unknown, member: unknown) => void;
 export type TypingCallback = (event: unknown, member: unknown) => void;
 export type ReceiptCallback = (event: unknown, room: unknown) => void;
 export type RedactionCallback = (event: unknown, room: unknown) => void;
+export type MyMembershipCallback = (room: unknown, membership: string, prevMembership: string | undefined) => void;
 
 export class MatrixClientService {
   private baseUrl: string;
@@ -44,6 +45,7 @@ export class MatrixClientService {
   private onTyping: TypingCallback | null = null;
   private onReceipt: ReceiptCallback | null = null;
   private onRedaction: RedactionCallback | null = null;
+  private onMyMembership: MyMembershipCallback | null = null;
 
   constructor(domain?: string) {
     this.baseUrl = `https://${domain ?? MATRIX_SERVER}`;
@@ -61,6 +63,7 @@ export class MatrixClientService {
     onTyping?: TypingCallback;
     onReceipt?: ReceiptCallback;
     onRedaction?: RedactionCallback;
+    onMyMembership?: MyMembershipCallback;
   }) {
     if (handlers.onSync) this.onSync = handlers.onSync;
     if (handlers.onTimeline) this.onTimeline = handlers.onTimeline;
@@ -68,6 +71,7 @@ export class MatrixClientService {
     if (handlers.onTyping) this.onTyping = handlers.onTyping;
     if (handlers.onReceipt) this.onReceipt = handlers.onReceipt;
     if (handlers.onRedaction) this.onRedaction = handlers.onRedaction;
+    if (handlers.onMyMembership) this.onMyMembership = handlers.onMyMembership;
   }
 
   /** Custom request function using axios (matching bastyon-chat pattern) */
@@ -279,6 +283,11 @@ export class MatrixClientService {
       this.onRedaction?.(event, room);
     });
 
+    // Fires when MY membership changes in a room (join→leave = kicked, join→ban, etc.)
+    this.client.on("Room.myMembership", (room: unknown, membership: string, prevMembership: string | undefined) => {
+      this.onMyMembership?.(room, membership, prevMembership);
+    });
+
     this.client.on("sync", (state: string) => {
       console.log("[matrix-client] sync state:", state);
       if (state === "PREPARED" || state === "SYNCING") {
@@ -345,6 +354,19 @@ export class MatrixClientService {
     return this.client.mxcUrlToHttp(src.content_uri);
   }
 
+  /** Upload content and return the raw mxc:// URI (for use in state events like room avatar) */
+  async uploadContentMxc(file: Blob): Promise<string> {
+    if (!this.client) throw new Error("Client not initialized");
+    const res = await this.client.uploadContent(file, {});
+    return res.content_uri;
+  }
+
+  /** Convert an mxc:// URI to an HTTP URL */
+  mxcToHttp(mxcUrl: string): string | null {
+    if (!this.client) return null;
+    return this.client.mxcUrlToHttp(mxcUrl) ?? null;
+  }
+
   /** Get all rooms */
   getRooms(): unknown[] {
     return this.client?.getRooms() ?? [];
@@ -359,6 +381,12 @@ export class MatrixClientService {
   async createRoom(opts: Record<string, unknown>): Promise<{ room_id: string }> {
     if (!this.client) throw new Error("Client not initialized");
     return this.client.createRoom(opts);
+  }
+
+  /** Invite a user to a room */
+  async invite(roomId: string, userId: string): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    await this.client.invite(roomId, userId);
   }
 
   /** Join a room */
@@ -486,6 +514,46 @@ export class MatrixClientService {
       await this.client.sendToDevice(MatrixClientService.TYPING_EVENT_TYPE, contentMap);
     } catch (e) {
       console.warn("[matrix-client] setTyping (toDevice) error:", e);
+    }
+  }
+
+  /** Leave a room (Matrix leave API) */
+  async leaveRoom(roomId: string): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    await this.client.leave(roomId);
+  }
+
+  /** Forget a room after leaving (removes from server-side room list) */
+  async forgetRoom(roomId: string): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    await this.client.forget(roomId, true);
+  }
+
+  /** Kick a user from a room (requires admin power level) */
+  async kick(roomId: string, userId: string, reason?: string): Promise<void> {
+    if (!this.client) throw new Error("Client not initialized");
+    await this.client.kick(roomId, userId, reason);
+  }
+
+  /** Resolve a room alias to a room ID */
+  async getRoomIdForAlias(alias: string): Promise<string | null> {
+    if (!this.client) return null;
+    try {
+      const result = await this.client.getRoomIdForAlias(alias);
+      return (result as { room_id: string }).room_id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Delete a room alias from the server directory */
+  async deleteAlias(alias: string): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      await this.client.deleteAlias(alias);
+      return true;
+    } catch {
+      return false;
     }
   }
 

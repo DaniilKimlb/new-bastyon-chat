@@ -27,7 +27,8 @@ watch(() => props.show, (val) => {
       <div
         v-if="props.show"
         :class="typeClasses"
-        class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg px-4 py-2 text-sm shadow-lg"
+        class="fixed left-1/2 z-50 -translate-x-1/2 rounded-lg px-4 py-2 text-sm shadow-lg"
+        style="bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px))"
       >
         {{ props.message }}
       </div>

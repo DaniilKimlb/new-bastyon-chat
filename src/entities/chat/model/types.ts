@@ -7,6 +7,8 @@ export interface ChatRoom {
   avatar?: string;
   isGroup: boolean;
   updatedAt: number;
+  /** Room membership: "join" | "invite". Invited rooms need explicit join before interaction. */
+  membership?: "join" | "invite";
 }
 
 /** Metadata for file/image/video/audio messages */

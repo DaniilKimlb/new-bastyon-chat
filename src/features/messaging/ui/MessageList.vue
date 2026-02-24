@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, nextTick, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, nextTick, onUnmounted, provide } from "vue";
 import { useChatStore } from "@/entities/chat";
 import { useAuthStore } from "@/entities/auth";
 import { useThemeStore } from "@/entities/theme";
@@ -13,12 +13,18 @@ import { MessageSkeleton } from "@/shared/ui/skeleton";
 import MessageContextMenu from "./MessageContextMenu.vue";
 import EmojiPicker from "./EmojiPicker.vue";
 import MediaViewer from "./MediaViewer.vue";
+import { DynamicScroller, DynamicScrollerItem } from "vue-virtual-scroller";
+import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 
 const chatStore = useChatStore();
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const { loadMessages, toggleReaction, deleteMessage } = useMessages();
 const { toast } = useToast();
+
+// Provide search query for MessageContent highlighting
+const searchQuery = ref("");
+provide("searchQuery", searchQuery);
 
 const handleDeleteForMe = () => {
   if (chatStore.deletingMessage) {
@@ -111,26 +117,74 @@ const handleEmojiSelect = (emoji: string) => {
 };
 
 const listRef = ref<HTMLElement>();
+const scrollerRef = ref<InstanceType<typeof DynamicScroller>>();
 const isNearBottom = ref(true);
 const showScrollFab = ref(false);
 const loading = ref(false);
+const loadingMore = ref(false);
+const hasMore = ref(true);
+const newMessageCount = ref(0);
+
+/** Flatten messages + date separators into a single virtual list */
+interface VirtualItem {
+  id: string;
+  type: "message" | "date-separator" | "typing";
+  message?: import("@/entities/chat").Message;
+  label?: string;
+  index?: number;
+}
+
+const virtualItems = computed<VirtualItem[]>(() => {
+  const msgs = chatStore.activeMessages;
+  const items: VirtualItem[] = [];
+
+  for (let i = 0; i < msgs.length; i++) {
+    const msg = msgs[i];
+    const prevMsg = msgs[i - 1];
+    const dateLabel = getDateLabel(msg.timestamp, prevMsg?.timestamp);
+
+    if (dateLabel) {
+      items.push({ id: `date-${msg.id}`, type: "date-separator", label: dateLabel });
+    }
+
+    items.push({ id: msg.id, type: "message", message: msg, index: i });
+  }
+
+  // Typing indicator
+  if (typingText.value) {
+    items.push({ id: "typing-indicator", type: "typing" });
+  }
+
+  return items;
+});
+
+/** Get the actual scroll container (DynamicScroller's internal element or outer wrapper fallback) */
+const getScrollContainer = (): HTMLElement | null => {
+  return (scrollerRef.value?.$el as HTMLElement) ?? listRef.value ?? null;
+};
 
 /** Check if user is scrolled near the bottom */
 const checkScroll = () => {
-  if (!listRef.value) return;
-  const { scrollTop, scrollHeight, clientHeight } = listRef.value;
+  const el = getScrollContainer();
+  if (!el) return;
+  const { scrollTop, scrollHeight, clientHeight } = el;
   const distFromBottom = scrollHeight - scrollTop - clientHeight;
   isNearBottom.value = distFromBottom < 100;
   showScrollFab.value = distFromBottom > 300;
+  if (isNearBottom.value) newMessageCount.value = 0;
 };
 
 const scrollToBottom = (smooth = false) => {
+  newMessageCount.value = 0;
   nextTick(() => {
-    if (!listRef.value) return;
-    listRef.value.scrollTo({
-      top: listRef.value.scrollHeight,
-      behavior: smooth ? "smooth" : "instant",
-    });
+    if (scrollerRef.value) {
+      scrollerRef.value.scrollToBottom();
+    } else if (listRef.value) {
+      listRef.value.scrollTo({
+        top: listRef.value.scrollHeight,
+        behavior: smooth ? "smooth" : "instant",
+      });
+    }
   });
 };
 
@@ -140,6 +194,7 @@ watch(
   async (roomId) => {
     if (roomId) {
       loading.value = true;
+      newMessageCount.value = 0;
       try {
         await loadMessages(roomId);
       } finally {
@@ -151,21 +206,100 @@ watch(
   { immediate: true },
 );
 
-// Auto-scroll only if user is near bottom
+// Auto-scroll only if user is near bottom; otherwise increment new message count
 watch(
   () => chatStore.activeMessages.length,
-  () => {
-    if (isNearBottom.value) scrollToBottom();
+  (newLen, oldLen) => {
+    if (isNearBottom.value) {
+      scrollToBottom();
+    } else if (oldLen !== undefined && newLen > oldLen) {
+      newMessageCount.value += newLen - oldLen;
+    }
   },
 );
 
+// --- Floating date header ---
+const currentDateLabel = ref("");
+const showDateHeader = ref(false);
+let dateHideTimer: ReturnType<typeof setTimeout> | undefined;
+
+const updateFloatingDate = () => {
+  // Use first visible virtual item to determine date
+  const scroller = scrollerRef.value;
+  if (!scroller) return;
+
+  // The scroller exposes $el which is the scroll container
+  const scrollEl = scroller.$el as HTMLElement;
+  if (!scrollEl) return;
+
+  // Find the first date separator that's visible or just above viewport
+  const dateSeps = scrollEl.querySelectorAll("[data-date-label]");
+  const containerTop = scrollEl.getBoundingClientRect().top;
+  let bestLabel = "";
+  let bestTop = -Infinity;
+
+  for (const el of dateSeps) {
+    const rect = el.getBoundingClientRect();
+    const relTop = rect.top - containerTop;
+    if (relTop <= 8 && relTop > bestTop) {
+      bestTop = relTop;
+      bestLabel = (el as HTMLElement).dataset.dateLabel ?? "";
+    }
+  }
+
+  if (bestLabel) {
+    currentDateLabel.value = bestLabel;
+  }
+
+  // Show on scroll, hide after inactivity
+  showDateHeader.value = true;
+  clearTimeout(dateHideTimer);
+  dateHideTimer = setTimeout(() => {
+    showDateHeader.value = false;
+  }, 1500);
+};
+
+const onScroll = () => {
+  checkScroll();
+  updateFloatingDate();
+
+  // Load more when scrolled near the top
+  const container = getScrollContainer();
+  if (!container) return;
+  const { scrollTop } = container;
+  if (scrollTop < 200 && !loadingMore.value && hasMore.value) {
+    const roomId = chatStore.activeRoomId;
+    if (!roomId) return;
+    const prevScrollHeight = container.scrollHeight;
+    loadingMore.value = true;
+    chatStore.loadMoreMessages(roomId).then((more) => {
+      hasMore.value = more;
+      loadingMore.value = false;
+      nextTick(() => {
+        const el = getScrollContainer();
+        if (el) {
+          const newScrollHeight = el.scrollHeight;
+          el.scrollTop += newScrollHeight - prevScrollHeight;
+        }
+      });
+    });
+  }
+};
+
+let scrollListenEl: HTMLElement | null = null;
+
 onMounted(() => {
   scrollToBottom();
-  listRef.value?.addEventListener("scroll", checkScroll, { passive: true });
+  // Attach scroll listener to actual scroll container after next tick (scroller needs to render)
+  nextTick(() => {
+    scrollListenEl = getScrollContainer();
+    scrollListenEl?.addEventListener("scroll", onScroll, { passive: true });
+  });
 });
 
 onUnmounted(() => {
-  listRef.value?.removeEventListener("scroll", checkScroll);
+  scrollListenEl?.removeEventListener("scroll", onScroll);
+  clearTimeout(dateHideTimer);
 });
 
 const getDateLabel = (
@@ -197,20 +331,44 @@ const typingText = computed(() => {
 
 /** Scroll to a specific message and flash highlight */
 const scrollToMessage = (messageId: string) => {
-  nextTick(() => {
-    const el = listRef.value?.querySelector(`[data-message-id="${messageId}"]`) as HTMLElement | null;
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.classList.add("search-highlight");
-    setTimeout(() => el.classList.remove("search-highlight"), 1500);
-  });
+  const idx = virtualItems.value.findIndex(item => item.id === messageId);
+  if (idx >= 0 && scrollerRef.value) {
+    scrollerRef.value.scrollToItem(idx);
+    // Flash highlight after scroll completes
+    nextTick(() => {
+      setTimeout(() => {
+        const container = getScrollContainer();
+        const el = container?.querySelector(`[data-message-id="${messageId}"]`) as HTMLElement | null;
+        if (el) {
+          el.classList.add("search-highlight");
+          setTimeout(() => el.classList.remove("search-highlight"), 1500);
+        }
+      }, 100);
+    });
+  }
 };
 
-defineExpose({ scrollToMessage });
+/** Expose setSearchQuery for ChatSearch integration */
+const setSearchQuery = (q: string) => {
+  searchQuery.value = q;
+};
+
+defineExpose({ scrollToMessage, setSearchQuery });
 </script>
 
 <template>
-  <div ref="listRef" class="relative flex-1 overflow-y-auto px-4 py-3" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
+  <div ref="listRef" class="relative flex-1 overflow-y-auto" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
+    <!-- Floating date header (single, non-stacking) -->
+    <div
+      v-if="currentDateLabel && !loading"
+      class="pointer-events-none sticky top-0 z-20 flex justify-center transition-opacity duration-150"
+      :class="showDateHeader ? 'opacity-100' : 'opacity-0'"
+    >
+      <span class="rounded-full bg-neutral-grad-0/80 px-3 py-1 text-xs text-text-on-main-bg-color backdrop-blur-sm">
+        {{ currentDateLabel }}
+      </span>
+    </div>
+
     <!-- Loading state -->
     <MessageSkeleton v-if="loading" />
 
@@ -225,54 +383,79 @@ defineExpose({ scrollToMessage });
       <span class="text-sm">No messages yet. Start a conversation!</span>
     </div>
 
-    <!-- Messages -->
-    <TransitionGroup v-else :name="themeStore.animationsEnabled ? 'msg' : ''" tag="div">
-      <template
-        v-for="(message, index) in chatStore.activeMessages"
-        :key="message.id"
-      >
-        <!-- Date separator -->
-        <div
-          v-if="getDateLabel(message.timestamp, chatStore.activeMessages[index - 1]?.timestamp)"
-          :key="'date-' + message.id"
-          class="sticky top-0 z-10 my-3 flex justify-center"
+    <!-- Virtualized Messages -->
+    <DynamicScroller
+      v-else
+      ref="scrollerRef"
+      :items="virtualItems"
+      :min-item-size="48"
+      key-field="id"
+      class="h-full px-4 py-3"
+    >
+      <template #default="{ item, index, active }">
+        <DynamicScrollerItem
+          :item="item"
+          :active="active"
+          :data-index="index"
+          :size-dependencies="[
+            item.type === 'message' ? item.message?.content : item.label,
+            item.message?.fileInfo?.w,
+            item.message?.reactions ? Object.keys(item.message.reactions).length : 0,
+          ]"
         >
-          <span class="rounded-full bg-neutral-grad-0/80 px-3 py-1 text-xs text-text-on-main-bg-color backdrop-blur-sm">
-            {{ getDateLabel(message.timestamp, chatStore.activeMessages[index - 1]?.timestamp) }}
-          </span>
-        </div>
+          <!-- Load-more spinner at top -->
+          <div v-if="index === 0 && loadingMore" class="flex justify-center py-2">
+            <div class="h-5 w-5 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
+          </div>
 
-        <MessageBubble
-          :message="message"
-          :is-own="message.senderId === authStore.address"
-          :is-group="isGroup"
-          :show-avatar="themeStore.messageGrouping ? !isConsecutiveMessage(message, chatStore.activeMessages[index + 1]) : true"
-          :is-first-in-group="themeStore.messageGrouping ? !isConsecutiveMessage(chatStore.activeMessages[index - 1], message) : true"
-          :style="index > 0 ? { marginTop: 'var(--message-spacing)' } : {}"
-          :data-message-id="message.id"
-          @contextmenu="openContextMenu"
-          @reply="(msg) => { chatStore.replyingTo = { id: msg.id, senderId: msg.senderId, content: msg.content.slice(0, 150), type: msg.type }; }"
-          @scroll-to-reply="scrollToMessage"
-          @open-media="handleOpenMedia"
-          @toggle-reaction="(emoji, messageId) => toggleReaction(messageId, emoji)"
-          @add-reaction="handleOpenEmojiPicker"
-        >
-          <template #avatar>
-            <UserAvatar :address="message.senderId" size="sm" />
-          </template>
-        </MessageBubble>
+          <!-- Date separator (use padding instead of margin — DynamicScroller ignores margins) -->
+          <div
+            v-if="item.type === 'date-separator'"
+            class="flex justify-center py-3"
+            :data-date-label="item.label"
+          >
+            <span class="rounded-full bg-neutral-grad-0/80 px-3 py-1 text-xs text-text-on-main-bg-color backdrop-blur-sm">
+              {{ item.label }}
+            </span>
+          </div>
+
+          <!-- Message (wrapped with padding — DynamicScroller ignores margins for height calc) -->
+          <div
+            v-else-if="item.type === 'message' && item.message"
+            :style="(item.index ?? 0) > 0 ? { paddingTop: 'var(--message-spacing)' } : {}"
+            :data-message-id="item.message.id"
+          >
+            <MessageBubble
+              :message="item.message"
+              :is-own="item.message.senderId === authStore.address"
+              :is-group="isGroup"
+              :show-avatar="themeStore.messageGrouping ? !isConsecutiveMessage(item.message, chatStore.activeMessages[(item.index ?? 0) + 1]) : true"
+              :is-first-in-group="themeStore.messageGrouping ? !isConsecutiveMessage(chatStore.activeMessages[(item.index ?? 0) - 1], item.message) : true"
+              @contextmenu="openContextMenu"
+              @reply="(msg) => { chatStore.replyingTo = { id: msg.id, senderId: msg.senderId, content: msg.content.slice(0, 150), type: msg.type }; }"
+              @scroll-to-reply="scrollToMessage"
+              @open-media="handleOpenMedia"
+              @toggle-reaction="(emoji, messageId) => toggleReaction(messageId, emoji)"
+              @add-reaction="handleOpenEmojiPicker"
+            >
+              <template #avatar>
+                <UserAvatar :address="item.message.senderId" size="sm" />
+              </template>
+            </MessageBubble>
+          </div>
+
+          <!-- Typing indicator -->
+          <div v-else-if="item.type === 'typing'" class="flex items-center gap-2 px-10 py-1">
+            <div class="flex gap-0.5">
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-text-on-main-bg-color [animation-delay:-0.3s]" />
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-text-on-main-bg-color [animation-delay:-0.15s]" />
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-text-on-main-bg-color" />
+            </div>
+            <span class="text-xs text-text-on-main-bg-color">{{ typingText }}</span>
+          </div>
+        </DynamicScrollerItem>
       </template>
-
-      <!-- Typing indicator -->
-      <div v-if="typingText" key="typing-indicator" class="flex items-center gap-2 px-10 py-1">
-        <div class="flex gap-0.5">
-          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-text-on-main-bg-color [animation-delay:-0.3s]" />
-          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-text-on-main-bg-color [animation-delay:-0.15s]" />
-          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-text-on-main-bg-color" />
-        </div>
-        <span class="text-xs text-text-on-main-bg-color">{{ typingText }}</span>
-      </div>
-    </TransitionGroup>
+    </DynamicScroller>
 
     <!-- Context menu -->
     <MessageContextMenu
@@ -304,16 +487,23 @@ defineExpose({ scrollToMessage });
       @close="showMediaViewer = false"
     />
 
-    <!-- Scroll-to-bottom FAB -->
+    <!-- Scroll-to-bottom FAB with new message badge -->
     <transition name="fab">
       <button
         v-if="showScrollFab"
-        class="absolute bottom-4 right-4 flex h-10 w-10 items-center justify-center rounded-full bg-background-total-theme shadow-lg transition-all hover:bg-neutral-grad-0"
+        class="absolute bottom-4 right-4 flex h-11 w-11 items-center justify-center rounded-full bg-background-total-theme shadow-lg transition-all hover:bg-neutral-grad-0"
         @click="scrollToBottom(true)"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-text-on-main-bg-color">
           <polyline points="6 9 12 15 18 9" />
         </svg>
+        <!-- New message count badge -->
+        <span
+          v-if="newMessageCount > 0"
+          class="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-color-bg-ac px-1 text-[10px] font-medium text-text-on-bg-ac-color"
+        >
+          {{ newMessageCount > 99 ? "99+" : newMessageCount }}
+        </span>
       </button>
     </transition>
 
@@ -371,15 +561,6 @@ defineExpose({ scrollToMessage });
 .modal-fade-enter-from,
 .modal-fade-leave-to {
   opacity: 0;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .msg-enter-active {
-    transition: opacity 0.2s ease, transform 0.2s ease;
-  }
-  .msg-enter-from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
 }
 </style>
 

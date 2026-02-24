@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, nextTick } from "vue";
+import { ref, nextTick, watch, computed } from "vue";
 import { useChatStore, MessageType } from "@/entities/chat";
 import { useThemeStore } from "@/entities/theme";
 import { stripMentionAddresses } from "@/shared/lib/message-format";
+import { getDraft, saveDraft, clearDraft } from "@/shared/lib/drafts";
 import { useMessages } from "../model/use-messages";
 import { useMediaUpload } from "../model/use-media-upload";
 import EmojiPicker from "./EmojiPicker.vue";
@@ -22,6 +23,26 @@ const textareaRef = ref<HTMLTextAreaElement>();
 const fileInputRef = ref<HTMLInputElement>();
 const sending = ref(false);
 let typingTimeout: ReturnType<typeof setTimeout> | null = null;
+
+let draftTimer: ReturnType<typeof setTimeout> | undefined;
+watch(text, (val) => {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    const roomId = chatStore.activeRoomId;
+    if (roomId) saveDraft(roomId, val);
+  }, 500);
+});
+
+// Save draft before switching rooms, restore draft for new room
+watch(() => chatStore.activeRoomId, (newId, oldId) => {
+  if (oldId) saveDraft(oldId, text.value);
+  text.value = newId ? getDraft(newId) : "";
+  chatStore.editingMessage = null;
+  chatStore.replyingTo = null;
+  nextTick(() => {
+    if (textareaRef.value) textareaRef.value.style.height = "auto";
+  });
+});
 
 // Watch for edit mode
 watch(() => chatStore.editingMessage, (editing) => {
@@ -65,6 +86,8 @@ const handleSend = () => {
     sendMessage(text.value);
   }
   text.value = "";
+  const roomId = chatStore.activeRoomId;
+  if (roomId) clearDraft(roomId);
   setTyping(false);
   nextTick(() => {
     if (textareaRef.value) {

@@ -17,26 +17,44 @@ export class MatrixKit {
     this.matrixService = matrixService;
   }
 
-  /** Check if room is a 1:1 (tete-a-tete) chat */
+  /** Check if room is a 1:1 (tete-a-tete) chat.
+   *  Filters to active (join/invite) members to avoid false negatives
+   *  after rejoin when "leave" members inflate the count.
+   *  Falls back to room name/alias pattern matching for incomplete state. */
   isTetatetChat(room: Record<string, unknown>): boolean {
-    if (typeof room.tetatet !== "undefined") return room.tetatet as boolean;
-
     const members = this.getRoomMembers(room);
-    if (members.length !== 2) return false;
+    // Filter to active members (join/invite) — "leave"/"ban" members must not affect the check
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const activeMembers = members.filter((m: any) => {
+      const ms = m.membership as string;
+      return ms === "join" || ms === "invite";
+    });
 
-    const users = members.map((m) => ({ id: getmatrixid(m.userId as string) }));
-    if (users.length !== 2) return false;
-
-    const tid = this.tetatetId(users[0], users[1]);
-    if (!tid) return false;
-
-    const roomName = room.name as string;
+    const roomName = (room.name as string) ?? "";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const canonicalAlias = ((room as any).getCanonicalAlias?.() as string) ?? "";
 
-    const isTetatet = roomName === "#" + tid || canonicalAlias.indexOf(tid) > -1;
-    room.tetatet = isTetatet;
-    return isTetatet;
+    if (activeMembers.length === 2) {
+      const users = activeMembers.map((m) => ({ id: getmatrixid(m.userId as string) }));
+      const tid = this.tetatetId(users[0], users[1]);
+      if (tid) {
+        const isTetatet = roomName === "#" + tid || canonicalAlias.indexOf(tid) > -1;
+        if (isTetatet) {
+          room.tetatet = true;
+          return true;
+        }
+      }
+    }
+
+    // Fallback: check room name/alias pattern — "#" + 56-char hex = SHA-224 tetatetid hash.
+    // Handles stale member state right after rejoin via M_ROOM_IN_USE.
+    if (/^#[a-f0-9]{56}$/.test(roomName) || /[a-f0-9]{56}/.test(canonicalAlias)) {
+      room.tetatet = true;
+      return true;
+    }
+
+    room.tetatet = false;
+    return false;
   }
 
   /** Check if room can be interacted with */

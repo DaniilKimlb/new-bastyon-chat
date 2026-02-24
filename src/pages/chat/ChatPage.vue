@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ChatSidebar from "@/widgets/sidebar/ChatSidebar.vue";
 import ChatWindow from "@/widgets/chat-window/ChatWindow.vue";
+import { GroupCreationPanel } from "@/features/group-creation";
 import { useChatStore } from "@/entities/chat";
 
 const chatStore = useChatStore();
@@ -8,17 +9,22 @@ const chatStore = useChatStore();
 const showSidebar = ref(true);
 const isMobile = ref(false);
 
+let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    isMobile.value = window.innerWidth < 768;
+  }, 150);
 };
 
 onMounted(() => {
-  checkMobile();
+  isMobile.value = window.innerWidth < 768;
   window.addEventListener("resize", checkMobile);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", checkMobile);
+  clearTimeout(resizeTimer);
 });
 
 const onSelectRoom = () => {
@@ -31,47 +37,64 @@ const onBackToSidebar = () => {
   chatStore.setActiveRoom(null);
   showSidebar.value = true;
 };
+
+const showGroupCreation = ref(false);
+
+const onNewGroup = () => {
+  showGroupCreation.value = true;
+};
+
+const onGroupCreated = () => {
+  showGroupCreation.value = false;
+  if (isMobile.value) showSidebar.value = false;
+};
+
+const onCloseGroupCreation = () => {
+  showGroupCreation.value = false;
+};
 </script>
 
 <template>
-  <div class="flex h-screen bg-background-total-theme">
-    <!-- Sidebar -->
-    <transition name="slide-sidebar">
+  <div class="flex h-screen bg-background-total-theme" :class="{ 'relative overflow-hidden': isMobile }">
+    <!-- Desktop: show both side by side -->
+    <template v-if="!isMobile">
       <ChatSidebar
-        v-if="!isMobile || showSidebar"
-        class="h-full w-full md:w-80 md:shrink-0"
+        class="h-full w-80 shrink-0"
         @select-room="onSelectRoom"
+        @new-group="onNewGroup"
       />
-    </transition>
-
-    <!-- Chat window -->
-    <transition name="slide-chat">
+      <GroupCreationPanel
+        v-if="showGroupCreation"
+        class="h-full flex-1"
+        @created="onGroupCreated"
+        @close="onCloseGroupCreation"
+      />
       <ChatWindow
-        v-if="!isMobile || !showSidebar"
+        v-else
         class="h-full flex-1"
         @back="onBackToSidebar"
       />
-    </transition>
+    </template>
+
+    <!-- Mobile: v-show preserves state (scroll position etc.) -->
+    <template v-else>
+      <ChatSidebar
+        v-show="showSidebar && !showGroupCreation"
+        class="absolute inset-0 z-10 h-full w-full"
+        @select-room="onSelectRoom"
+        @new-group="onNewGroup"
+      />
+      <ChatWindow
+        v-show="!showSidebar && !showGroupCreation"
+        class="absolute inset-0 z-10 h-full w-full"
+        @back="onBackToSidebar"
+      />
+      <GroupCreationPanel
+        v-if="showGroupCreation"
+        class="absolute inset-0 z-20 h-full w-full"
+        @created="onGroupCreated"
+        @close="onCloseGroupCreation"
+      />
+    </template>
   </div>
 </template>
-
-<style scoped>
-.slide-sidebar-enter-active,
-.slide-sidebar-leave-active,
-.slide-chat-enter-active,
-.slide-chat-leave-active {
-  transition: transform 0.25s ease;
-}
-.slide-sidebar-enter-from {
-  transform: translateX(-100%);
-}
-.slide-sidebar-leave-to {
-  transform: translateX(-100%);
-}
-.slide-chat-enter-from {
-  transform: translateX(100%);
-}
-.slide-chat-leave-to {
-  transform: translateX(100%);
-}
-</style>

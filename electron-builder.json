@@ -1,0 +1,30 @@
+{
+  "appId": "com.bastyon.chat",
+  "productName": "Bastyon Chat",
+  "directories": {
+    "output": "release"
+  },
+  "asar": false,
+  "files": [
+    "dist/**/*",
+    "electron/**/*"
+  ],
+  "mac": {
+    "target": ["dmg", "zip"],
+    "category": "public.app-category.social-networking",
+    "icon": "public/favicon.ico"
+  },
+  "win": {
+    "target": ["nsis", "zip"],
+    "icon": "public/favicon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "Network;Chat",
+    "icon": "public/favicon.ico"
+  }
+}

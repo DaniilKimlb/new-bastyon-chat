@@ -4,6 +4,11 @@ node_modules/
 # Build output
 dist/
 
+# Electron build output
+release/
+*.app/
+Bastyon Chat.app/
+
 # Vite
 *.local
 
