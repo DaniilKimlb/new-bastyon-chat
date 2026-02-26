@@ -58,5 +58,24 @@ export default defineConfig({
       buffer: "buffer",
       stream: "stream-browserify",
     }
-  }
+  },
+  build: {
+    target: "es2020",
+    minify: "terser",
+    terserOptions: {
+      compress: { drop_console: false, passes: 2 },
+      format: { comments: false },
+    },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("matrix-js-sdk") || id.includes("@matrix-org")) return "matrix";
+          if (id.includes("node_modules/vue") || id.includes("vue-router") || id.includes("pinia")) return "vue-core";
+          if (id.includes("vue-virtual-scroller")) return "virtual-scroller";
+          if (id.includes("node_modules/buffer") || id.includes("stream-browserify") || id.includes("pbkdf2") || id.includes("create-hash") || id.includes("bn.js")) return "crypto-polyfills";
+        },
+      },
+    },
+    chunkSizeWarningLimit: 800,
+  },
 });

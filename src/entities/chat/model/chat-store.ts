@@ -1276,11 +1276,38 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
-  /** Load ALL messages for a room (for search). Paginates until no more history. */
+  /** Load ALL messages for a room (for search). Paginates until no more history.
+   *  Unlike calling loadMoreMessages in a loop, this only updates reactive state
+   *  once at the end to avoid flickering caused by repeated re-renders. */
   const loadAllMessages = async (roomId: string): Promise<void> => {
-    let hasMore = true;
-    while (hasMore) {
-      hasMore = await loadMoreMessages(roomId);
+    try {
+      const matrixService = getMatrixClientService();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const matrixRoom = matrixService.getRoom(roomId) as any;
+      if (!matrixRoom) return;
+
+      // Paginate without touching reactive state
+      let keepGoing = true;
+      while (keepGoing) {
+        const prevCount = getTimelineEvents(matrixRoom).length;
+        try {
+          await matrixService.scrollback(roomId, 25);
+        } catch {
+          break;
+        }
+        if (getTimelineEvents(matrixRoom).length <= prevCount) {
+          keepGoing = false;
+        }
+      }
+
+      // Parse everything once and update reactive state in a single write
+      const timelineEvents = getTimelineEvents(matrixRoom);
+      const msgs = await parseTimelineEvents(timelineEvents, roomId);
+      applyExistingReceipts(matrixRoom, timelineEvents, msgs, matrixService.getUserId());
+      setMessages(roomId, msgs);
+      cacheMessages(roomId, msgs).catch(() => {});
+    } catch (e) {
+      console.error("[chat-store] loadAllMessages error:", e);
     }
   };
 

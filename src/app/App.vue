@@ -58,7 +58,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative flex h-screen flex-col bg-background-total-theme text-text-color">
+  <div class="relative flex flex-col bg-background-total-theme text-text-color" style="height: 100vh; height: 100dvh; padding-top: env(safe-area-inset-top, 0px)">
     <TitleBar v-if="isElectron" />
     <div class="relative min-h-0 flex-1 overflow-hidden">
       <transition :name="isMobile ? '' : 'fade'" mode="out-in">

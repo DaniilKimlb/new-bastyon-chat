@@ -130,7 +130,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col bg-background-total-theme" style="padding-bottom: var(--keyboardheight, 0px)">
+  <div class="flex h-full flex-col bg-background-total-theme" style="padding-bottom: max(var(--keyboardheight, 0px), env(safe-area-inset-bottom, 0px))">
     <!-- Chat header -->
     <div
       v-if="chatStore.activeRoom"

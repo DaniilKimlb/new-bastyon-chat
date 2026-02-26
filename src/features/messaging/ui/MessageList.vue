@@ -205,10 +205,15 @@ watch(
   () => chatStore.activeRoomId,
   async (roomId) => {
     if (roomId) {
-      loading.value = true;
       newMessageCount.value = 0;
       hasMore.value = true;
       recentMessageIds.value.clear();
+
+      // Show cached messages instantly while loading from server
+      await chatStore.loadCachedMessages(roomId);
+      const hadCached = chatStore.activeMessages.length > 0;
+      if (!hadCached) loading.value = true;
+
       try {
         await loadMessages(roomId);
       } finally {
@@ -228,13 +233,18 @@ watch(
     // Skip if this is a pagination load (older messages prepended)
     if (loadingMore.value) return;
 
+    const delta = oldLen !== undefined ? newLen - oldLen : 0;
+
+    // Skip bulk loads (search loading all history) — only handle real-time messages (small deltas)
+    if (delta > 10) return;
+
     if (isNearBottom.value) {
       scrollToBottom();
-    } else if (oldLen !== undefined && newLen > oldLen) {
-      newMessageCount.value += newLen - oldLen;
+    } else if (delta > 0) {
+      newMessageCount.value += delta;
     }
     // Track newly arrived messages for entrance animation (only appended, not paginated)
-    if (!loading.value && oldLen !== undefined && newLen > oldLen) {
+    if (!loading.value && oldLen !== undefined && delta > 0) {
       const msgs = chatStore.activeMessages;
       for (let i = oldLen; i < newLen; i++) {
         if (msgs[i]) recentMessageIds.value.add(msgs[i].id);

@@ -27,14 +27,20 @@ function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+/** Strip Vue reactive proxies by deep-cloning to plain objects */
+function toPlain<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj));
+}
+
 export async function cacheRooms(rooms: unknown[]): Promise<void> {
   try {
+    const plain = toPlain(rooms);
     const db = await openDB();
     const tx = db.transaction(ROOMS_STORE, "readwrite");
     const store = tx.objectStore(ROOMS_STORE);
     // Clear and re-populate
     store.clear();
-    for (const room of rooms) {
+    for (const room of plain) {
       store.put(room);
     }
   } catch (e) {
@@ -77,8 +83,9 @@ export async function cacheMessages(roomId: string, messages: unknown[]): Promis
       };
       cursorReq.onerror = () => resolve();
     });
-    // Insert new messages
-    for (const msg of messages) {
+    // Insert new messages (deep-clone to strip reactive proxies)
+    const plain = toPlain(messages);
+    for (const msg of plain) {
       store.put(msg);
     }
   } catch (e) {

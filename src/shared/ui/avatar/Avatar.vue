@@ -53,6 +53,13 @@ const sizeClass = computed(() => ({
 }[props.size]));
 
 const imgError = ref(false);
+
+/** Fix bastyon.com:8092 → pocketnet.app:8092 (SSL cert mismatch) */
+const fixedSrc = computed(() => {
+  if (!props.src) return "";
+  return props.src.replace("bastyon.com:8092", "pocketnet.app:8092");
+});
+
 const showFallback = computed(() => !props.src || imgError.value);
 </script>
 
@@ -64,7 +71,7 @@ const showFallback = computed(() => !props.src || imgError.value);
   >
     <img
       v-if="!showFallback"
-      :src="props.src"
+      :src="fixedSrc"
       :alt="props.name"
       class="h-full w-full object-cover"
       @error="imgError = true"
