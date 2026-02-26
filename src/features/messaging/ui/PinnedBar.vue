@@ -30,7 +30,7 @@ const handleUnpin = () => {
 <template>
   <div
     v-if="currentPinned"
-    class="flex items-center gap-2 border-b border-neutral-grad-0 bg-background-total-theme px-3 py-2"
+    class="flex shrink-0 items-center gap-2 overflow-hidden border-b border-neutral-grad-0 bg-background-total-theme px-3 py-2"
   >
     <!-- Pin icon + cycle -->
     <button
