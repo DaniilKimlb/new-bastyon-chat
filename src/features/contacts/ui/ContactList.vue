@@ -161,7 +161,7 @@ const getRoomLongPress = (room: ChatRoom) => {
     >
       <template #default="{ item: room }">
         <button
-          class="flex h-[68px] w-full items-center gap-3 px-3 py-2.5 transition-colors hover:bg-neutral-grad-0"
+          class="flex h-[68px] w-full items-center gap-3 px-3 py-2.5 transition-all hover:bg-neutral-grad-0 active:scale-[0.98] active:bg-neutral-grad-0"
           :class="room.id === chatStore.activeRoomId ? 'bg-color-bg-ac/10' : ''"
           @click="handleSelect(room)"
           @contextmenu.prevent="(e: MouseEvent) => { ctxMenu = { show: true, x: e.clientX, y: e.clientY, roomId: room.id }; }"

@@ -74,7 +74,7 @@ const matchingRooms = computed(() => {
         <button
           v-for="room in matchingRooms"
           :key="room.id"
-          class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-neutral-grad-0"
+          class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-all hover:bg-neutral-grad-0 active:scale-[0.98] active:bg-neutral-grad-0"
           @click="handleSelectRoom(room)"
         >
           <UserAvatar
@@ -104,7 +104,7 @@ const matchingRooms = computed(() => {
         <button
           v-for="user in searchResults"
           :key="user.address"
-          class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-neutral-grad-0"
+          class="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-all hover:bg-neutral-grad-0 active:scale-[0.98] active:bg-neutral-grad-0"
           :disabled="isCreatingRoom"
           @click="handleSelectUser(user.address)"
         >
