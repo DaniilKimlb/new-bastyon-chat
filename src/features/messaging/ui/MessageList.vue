@@ -122,6 +122,8 @@ const isNearBottom = ref(true);
 const showScrollFab = ref(false);
 const loading = ref(false);
 const loadingMore = ref(false);
+const switching = ref(false); // true during room switch — suppresses watchers
+const settled = ref(false); // false until messages loaded + scrolled — hides scroller to prevent flicker
 const hasMore = ref(true);
 const newMessageCount = ref(0);
 
@@ -189,12 +191,7 @@ const scrollToBottom = (smooth = false) => {
       });
     }
   };
-  nextTick(() => {
-    doScroll();
-    // DynamicScroller may need extra time to finish layout after virtual items update
-    setTimeout(doScroll, 50);
-    setTimeout(doScroll, 150);
-  });
+  nextTick(doScroll);
 };
 
 // --- Message entrance animation ---
@@ -205,21 +202,34 @@ watch(
   () => chatStore.activeRoomId,
   async (roomId) => {
     if (roomId) {
+      // Suppress length watcher + hide scroller during the whole switch
+      switching.value = true;
+      settled.value = false;
       newMessageCount.value = 0;
       hasMore.value = true;
+      showScrollFab.value = false;
+      showDateHeader.value = false;
       recentMessageIds.value.clear();
+      isNearBottom.value = true;
 
-      // Show cached messages instantly while loading from server
-      await chatStore.loadCachedMessages(roomId);
-      const hadCached = chatStore.activeMessages.length > 0;
-      if (!hadCached) loading.value = true;
+      // Check if we already have messages in memory (e.g. previously visited room)
+      const hadInMemory = (chatStore.activeMessages.length ?? 0) > 0;
+      if (!hadInMemory) loading.value = true;
 
       try {
         await loadMessages(roomId);
       } finally {
         loading.value = false;
       }
+
+      // Scroll to bottom, then reveal once the DOM has painted
       scrollToBottom();
+      await nextTick();
+      // Extra frame to let DynamicScroller finish measuring items
+      requestAnimationFrame(() => {
+        settled.value = true;
+        switching.value = false;
+      });
     }
   },
   { immediate: true },
@@ -230,12 +240,10 @@ watch(
 watch(
   () => chatStore.activeMessages.length,
   (newLen, oldLen) => {
-    // Skip if this is a pagination load (older messages prepended)
-    if (loadingMore.value) return;
+    // Skip during room switch, pagination, or bulk loads (search)
+    if (switching.value || loadingMore.value) return;
 
     const delta = oldLen !== undefined ? newLen - oldLen : 0;
-
-    // Skip bulk loads (search loading all history) — only handle real-time messages (small deltas)
     if (delta > 10) return;
 
     if (isNearBottom.value) {
@@ -304,6 +312,7 @@ const updateFloatingDate = () => {
 };
 
 const onScroll = () => {
+  if (switching.value) return; // Ignore scroll events during room transition
   checkScroll();
   updateFloatingDate();
 
@@ -451,6 +460,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
       :min-item-size="48"
       key-field="id"
       class="h-full overflow-y-auto px-4 py-3"
+      :style="{ opacity: settled ? 1 : 0 }"
     >
       <template #default="{ item, index, active }">
         <DynamicScrollerItem
