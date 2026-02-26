@@ -1276,6 +1276,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
+  /** Load ALL messages for a room (for search). Paginates until no more history. */
+  const loadAllMessages = async (roomId: string): Promise<void> => {
+    let hasMore = true;
+    while (hasMore) {
+      hasMore = await loadMoreMessages(roomId);
+    }
+  };
+
   /** Apply a reaction event to a stored message */
   const applyReaction = (roomId: string, raw: Record<string, unknown>) => {
     const content = raw.content as Record<string, unknown>;
@@ -1735,6 +1743,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     leaveGroup,
     loadCachedMessages,
     loadCachedRooms,
+    loadAllMessages,
     loadMoreMessages,
     loadRoomMessages,
     markRoomAsRead,

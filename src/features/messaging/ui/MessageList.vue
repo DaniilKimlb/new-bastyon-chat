@@ -204,6 +204,7 @@ watch(
     if (roomId) {
       loading.value = true;
       newMessageCount.value = 0;
+      hasMore.value = true;
       recentMessageIds.value.clear();
       try {
         await loadMessages(roomId);

@@ -12,16 +12,27 @@ const chatStore = useChatStore();
 
 const query = ref("");
 const currentIndex = ref(0);
+const allLoaded = ref(false);
+const loadingAll = ref(false);
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const debouncedQuery = ref("");
 
 watch(query, (val) => {
   if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
+  debounceTimer = setTimeout(async () => {
     debouncedQuery.value = val;
     currentIndex.value = 0;
     emit("update:query", val);
-  }, 200);
+
+    // Load full history on first search so we can find all matches
+    const roomId = chatStore.activeRoomId;
+    if (val.trim() && roomId && !allLoaded.value) {
+      loadingAll.value = true;
+      await chatStore.loadAllMessages(roomId);
+      allLoaded.value = true;
+      loadingAll.value = false;
+    }
+  }, 300);
 });
 
 const matches = computed(() => {
@@ -78,7 +89,8 @@ onMounted(() => {
     />
 
     <span v-if="debouncedQuery" class="shrink-0 text-xs text-text-on-main-bg-color">
-      {{ totalMatches > 0 ? `${currentIndex + 1} of ${totalMatches}` : "No results" }}
+      <template v-if="loadingAll">Loading...</template>
+      <template v-else>{{ totalMatches > 0 ? `${currentIndex + 1} of ${totalMatches}` : "No results" }}</template>
     </span>
 
     <button
