@@ -194,6 +194,9 @@ const scrollToBottom = (smooth = false) => {
   });
 };
 
+// --- Message entrance animation ---
+const recentMessageIds = ref(new Set<string>());
+
 // Load messages when active room changes
 watch(
   () => chatStore.activeRoomId,
@@ -212,9 +215,6 @@ watch(
   },
   { immediate: true },
 );
-
-// --- Message entrance animation ---
-const recentMessageIds = ref(new Set<string>());
 
 // Auto-scroll only if user is near bottom; otherwise increment new message count
 // Also track new real-time messages for entrance animation
