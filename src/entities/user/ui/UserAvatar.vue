@@ -5,7 +5,7 @@ import { useLazyLoad } from "@/shared/lib/use-lazy-load";
 
 interface Props {
   address: string;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
 }
 
 const props = withDefaults(defineProps<Props>(), { size: "md" });
@@ -41,6 +41,7 @@ watch(() => props.address, (addr) => {
         'h-8 w-8': props.size === 'sm',
         'h-10 w-10': props.size === 'md',
         'h-14 w-14': props.size === 'lg',
+        'h-20 w-20': props.size === 'xl',
       }"
     />
   </div>

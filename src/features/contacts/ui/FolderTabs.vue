@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { useChatStore } from "@/entities/chat";
 
 type FilterValue = "all" | "personal" | "groups" | "invites";
@@ -10,25 +11,46 @@ interface Props {
 const props = defineProps<Props>();
 const emit = defineEmits<{ "update:modelValue": [value: FilterValue] }>();
 const chatStore = useChatStore();
+const { t } = useI18n();
 
-const tabs = [
-  { value: "all" as const, label: "All" },
-  { value: "personal" as const, label: "Personal" },
-  { value: "groups" as const, label: "Groups" },
-  { value: "invites" as const, label: "Invites" },
-];
+const tabs = computed(() => [
+  { value: "all" as const, label: t("tabs.all") },
+  { value: "personal" as const, label: t("tabs.personal") },
+  { value: "groups" as const, label: t("tabs.groups") },
+  { value: "invites" as const, label: t("tabs.invites") },
+]);
+
+const visibleTabs = computed(() =>
+  tabs.value.filter(t => t.value !== "invites" || chatStore.inviteCount > 0)
+);
+
+const tabRefs = ref<HTMLElement[]>([]);
+const indicatorStyle = ref<{ left: string; width: string }>({ left: "0px", width: "0px" });
+
+const updateIndicator = () => {
+  const idx = visibleTabs.value.findIndex(t => t.value === props.modelValue);
+  const el = tabRefs.value[idx];
+  if (el) {
+    indicatorStyle.value = {
+      left: `${el.offsetLeft + el.offsetWidth * 0.25}px`,
+      width: `${el.offsetWidth * 0.5}px`,
+    };
+  }
+};
+
+watch(() => props.modelValue, () => nextTick(updateIndicator));
+watch(visibleTabs, () => nextTick(updateIndicator));
+onMounted(() => nextTick(updateIndicator));
 </script>
 
 <template>
-  <div class="flex border-b border-neutral-grad-0">
+  <div class="relative flex border-b border-neutral-grad-0">
     <button
-      v-for="tab in tabs"
+      v-for="(tab, i) in visibleTabs"
       :key="tab.value"
+      :ref="(el) => { if (el) tabRefs[i] = el as HTMLElement }"
       class="relative flex-1 py-2.5 text-center text-sm font-medium transition-colors"
-      :class="[
-        props.modelValue === tab.value ? 'text-color-bg-ac' : 'text-text-on-main-bg-color hover:text-text-color',
-        tab.value === 'invites' && chatStore.inviteCount === 0 ? 'hidden' : '',
-      ]"
+      :class="props.modelValue === tab.value ? 'text-color-bg-ac' : 'text-text-on-main-bg-color hover:text-text-color'"
       @click="emit('update:modelValue', tab.value)"
     >
       {{ tab.label }}
@@ -38,10 +60,11 @@ const tabs = [
       >
         {{ chatStore.inviteCount }}
       </span>
-      <div
-        v-if="props.modelValue === tab.value"
-        class="absolute bottom-0 left-1/4 right-1/4 h-0.5 rounded-full bg-color-bg-ac"
-      />
     </button>
+    <!-- Sliding indicator -->
+    <div
+      class="absolute bottom-0 h-0.5 rounded-full bg-color-bg-ac transition-all duration-200 ease-out"
+      :style="indicatorStyle"
+    />
   </div>
 </template>

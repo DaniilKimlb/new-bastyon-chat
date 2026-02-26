@@ -36,12 +36,12 @@
 
   --neutral-grad-0: 235, 235, 240;
   --neutral-grad-1: 227, 228, 235;
-  --neutral-grad-2: 142, 144, 166;
-  --neutral-grad-3: 85, 87, 112;
-  --neutral-grad-4: 64, 65, 82;
+  --neutral-grad-2: 150, 155, 160;
+  --neutral-grad-3: 100, 105, 110;
+  --neutral-grad-4: 72, 77, 82;
 
-  --text-color: 10, 12, 23;
-  --text-on-main-bg-color: 85, 87, 112;
+  --text-color: 0, 0, 0;
+  --text-on-main-bg-color: 112, 117, 121;
   --text-on-bg-ac-color: 255, 255, 255;
 
   --voice-message-fillStyle: 81, 129, 184;
@@ -55,8 +55,8 @@
   --color-txt-ac: 0, 164, 255;
   --color-txt-ac-1: 0, 142, 191;
   --color-txt-ac-2: 250, 110, 132;
-  --color-txt-gray: 70, 71, 98;
-  --color-txt-gray-dark: 53, 53, 63;
+  --color-txt-gray: 82, 88, 92;
+  --color-txt-gray-dark: 55, 60, 65;
 
   --color-bg-orange: 255, 59, 0;
   --color-txt-orange: 255, 72, 0;
@@ -79,7 +79,7 @@
   --chat-input-bg: 240, 242, 245;
 
   /* Appearance settings (overridden by JS) */
-  --font-size-base: 14px;
+  --font-size-base: 16px;
   --message-spacing: 8px;
   --bubble-radius: 16px;
   --bubble-radius-small: 4px;
@@ -93,14 +93,14 @@
   --background-main: 8, 18, 30;
   --background-main-contrast: 245, 247, 250;
 
-  --neutral-grad-0: 8, 8, 9;
-  --neutral-grad-1: 22, 22, 25;
-  --neutral-grad-2: 48, 48, 60;
-  --neutral-grad-3: 68, 70, 84;
-  --neutral-grad-4: 90, 92, 120;
+  --neutral-grad-0: 35, 40, 48;
+  --neutral-grad-1: 42, 47, 55;
+  --neutral-grad-2: 75, 80, 90;
+  --neutral-grad-3: 110, 115, 125;
+  --neutral-grad-4: 140, 145, 155;
 
-  --text-color: 190, 182, 184;
-  --text-on-main-bg-color: 95, 97, 125;
+  --text-color: 232, 235, 237;
+  --text-on-main-bg-color: 170, 170, 170;
   --text-on-bg-ac-color: 255, 255, 255;
 
   --voice-message-fillStyle: 90, 140, 200;
@@ -114,15 +114,15 @@
   --color-txt-ac: 0, 174, 255;
   --color-txt-ac-1: 0, 152, 200;
   --color-txt-ac-2: 255, 120, 145;
-  --color-txt-gray: 115, 118, 140;
-  --color-txt-gray-dark: 125, 128, 148;
+  --color-txt-gray: 140, 148, 155;
+  --color-txt-gray-dark: 160, 168, 175;
 
   --color-bg-orange: 255, 80, 0;
   --color-txt-orange: 255, 80, 0;
 
   --color-shadow-base: 6, 8, 28;
   --color-shadow-var: 14, 16, 24;
-  --text-on-bg-shadow-color: 230, 235, 250;
+  --text-on-bg-shadow-color: 240, 242, 245;
 
   --color-bad: 250, 30, 85;
   --color-nrml: 0, 0, 0;
@@ -131,12 +131,12 @@
 
   /* Chat-specific dark */
   --chat-bubble-own: 0, 90, 210;
-  --chat-bubble-other: 22, 22, 25;
+  --chat-bubble-other: 30, 36, 45;
   --chat-sidebar: 15, 25, 38;
-  --chat-input-bg: 8, 18, 30;
+  --chat-input-bg: 15, 22, 34;
 
   /* Appearance settings (same defaults, overridden by JS) */
-  --font-size-base: 14px;
+  --font-size-base: 16px;
   --message-spacing: 8px;
   --bubble-radius: 16px;
   --bubble-radius-small: 4px;
@@ -176,6 +176,85 @@ a {
 ::selection {
   background: #b3d4fc;
   text-shadow: none;
+}
+
+/* ── Custom scrollbar ── */
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--neutral-grad-2), 0.4) transparent;
+}
+
+/* Webkit / Blink (Chrome, Safari, Electron) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--neutral-grad-2), 0.35);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--neutral-grad-2), 0.6);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── Animation kill-switch ── */
+:root:not([data-animations="true"]) *,
+:root:not([data-animations="true"]) *::before,
+:root:not([data-animations="true"]) *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-animations="true"] *,
+  :root[data-animations="true"] *::before,
+  :root[data-animations="true"] *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}
+
+/* ── Shared keyframes ── */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes bounce-in {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+@keyframes slide-down-in {
+  from { opacity: 0; transform: translateY(-100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes msg-in-own {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes msg-in-other {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Button press micro-feedback ── */
+.btn-press {
+  transition: transform 0.1s ease;
+}
+.btn-press:active {
+  transform: scale(0.92);
 }
 
 .sr-only {

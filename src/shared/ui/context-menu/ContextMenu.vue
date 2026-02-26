@@ -25,7 +25,14 @@ const style = computed(() => {
   const vh = window.innerHeight;
   const left = Math.min(props.x, vw - menuWidth - 8);
   const top = props.y + menuHeight > vh ? Math.max(8, props.y - menuHeight) : props.y;
-  return { left: `${Math.max(8, left)}px`, top: `${top}px` };
+  const finalLeft = Math.max(8, left);
+  const originX = props.x - finalLeft;
+  const originY = props.y - top;
+  return {
+    left: `${finalLeft}px`,
+    top: `${top}px`,
+    transformOrigin: `${originX}px ${originY}px`,
+  };
 });
 
 const handleSelect = (action: string) => {
@@ -61,23 +68,18 @@ const handleSelect = (action: string) => {
 
 <style scoped>
 .ctx-menu-enter-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .ctx-menu-leave-active {
-  transition: opacity 0.1s ease, transform 0.1s ease;
+  transition: opacity 0.12s ease-in, transform 0.12s ease-in;
 }
 .ctx-menu-enter-from {
   opacity: 0;
-  transform: scale(0.95);
+  transform: scale(0.85) translateY(-4px);
 }
 .ctx-menu-leave-to {
   opacity: 0;
-  transform: scale(0.95);
-}
-@media (prefers-reduced-motion: reduce) {
-  .ctx-menu-enter-active,
-  .ctx-menu-leave-active {
-    transition: none;
-  }
+  transform: scale(0.85);
 }
 </style>

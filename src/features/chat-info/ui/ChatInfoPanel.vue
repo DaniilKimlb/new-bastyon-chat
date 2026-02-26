@@ -159,7 +159,7 @@ const handleDeleteChat = () => {
           <!-- Header -->
           <div class="flex h-14 shrink-0 items-center gap-3 border-b border-neutral-grad-0 px-4">
             <button
-              class="flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
+              class="btn-press flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
               @click="emit('close')"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -435,17 +435,21 @@ const handleDeleteChat = () => {
 </template>
 
 <style scoped>
-.panel-fade-enter-active,
+.panel-fade-enter-active {
+  transition: opacity 0.25s ease-out;
+}
 .panel-fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease-in;
 }
 .panel-fade-enter-from,
 .panel-fade-leave-to {
   opacity: 0;
 }
-.panel-slide-enter-active,
+.panel-slide-enter-active {
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
 .panel-slide-leave-active {
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease-in;
 }
 .panel-slide-enter-from,
 .panel-slide-leave-to {

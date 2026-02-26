@@ -1,10 +1,34 @@
 <script setup lang="ts">
 import MainLayout from "@/widgets/layouts/MainLayout.vue";
 import { useThemeStore } from "@/entities/theme";
+import { useTorStore } from "@/entities/tor";
 import { Toggle } from "@/shared/ui/toggle";
 
 const themeStore = useThemeStore();
+const torStore = useTorStore();
 const router = useRouter();
+
+const isElectron = !!(window as any).electronAPI?.isElectron;
+
+const torStatusColor = computed(() => {
+  switch (torStore.status) {
+    case "started": return "text-green-500";
+    case "running":
+    case "install": return "text-yellow-500";
+    case "failed": return "text-red-500";
+    default: return "text-text-on-main-bg-color";
+  }
+});
+
+const torDotClass = computed(() => {
+  switch (torStore.status) {
+    case "started": return "bg-green-500";
+    case "running":
+    case "install": return "bg-yellow-500 animate-pulse";
+    case "failed": return "bg-red-500";
+    default: return "bg-neutral-400";
+  }
+});
 </script>
 
 <template>
@@ -45,6 +69,44 @@ const router = useRouter();
             :model-value="themeStore.isDarkMode"
             @update:model-value="themeStore.toggleTheme()"
           />
+        </div>
+
+        <!-- Tor Proxy (Electron only) -->
+        <div
+          v-if="isElectron"
+          class="rounded-lg bg-background-secondary-theme p-4"
+        >
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-text-on-main-bg-color">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span class="text-text-color">Tor Proxy</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-1.5">
+                <span class="inline-block h-2 w-2 rounded-full" :class="torDotClass" />
+                <span class="text-xs font-medium" :class="torStatusColor">{{ torStore.statusLabel }}</span>
+              </div>
+              <Toggle
+                :model-value="torStore.isEnabled"
+                @update:model-value="torStore.toggle()"
+              />
+            </div>
+          </div>
+          <!-- Bootstrap progress line -->
+          <p
+            v-if="torStore.isConnecting && torStore.info"
+            class="mt-2 pl-8 text-xs text-yellow-500"
+          >
+            {{ torStore.info }}
+          </p>
+          <p
+            v-else-if="torStore.status === 'failed'"
+            class="mt-2 pl-8 text-xs text-red-500"
+          >
+            Tor failed to start. Try toggling off and on again.
+          </p>
         </div>
 
         <!-- Notifications (placeholder) -->

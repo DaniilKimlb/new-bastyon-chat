@@ -1,16 +1,37 @@
 <script setup lang="ts">
 import { useAuthStore } from "@/entities/auth";
-import AvatarUpload from "./AvatarUpload.vue";
+import { useUserStore } from "@/entities/user/model";
+import { useLocaleStore } from "@/entities/locale";
+import type { Locale } from "@/entities/locale";
+import Avatar from "@/shared/ui/avatar/Avatar.vue";
 
-const router = useRouter();
 const authStore = useAuthStore();
+const userStore = useUserStore();
+const localeStore = useLocaleStore();
+const { t } = useI18n();
 
 const form = ref({
   name: authStore.userInfo?.name ?? "",
   about: authStore.userInfo?.about ?? "",
   site: authStore.userInfo?.site ?? "",
-  language: authStore.userInfo?.language ?? ""
+  language: authStore.userInfo?.language ?? "",
 });
+
+const aboutMaxLength = 140;
+const aboutCount = computed(() => form.value.about.length);
+
+const hasChanges = computed(() => {
+  const info = authStore.userInfo;
+  if (!info) return false;
+  return (
+    form.value.name !== (info.name ?? "") ||
+    form.value.about !== (info.about ?? "") ||
+    form.value.site !== (info.site ?? "") ||
+    form.value.language !== (info.language ?? "")
+  );
+});
+
+const saveSuccess = ref(false);
 
 const handleSave = async () => {
   await authStore.editUserData({
@@ -18,33 +39,185 @@ const handleSave = async () => {
     name: form.value.name,
     about: form.value.about,
     site: form.value.site,
-    language: form.value.language
+    language: form.value.language,
   });
-  router.push({ name: "ProfilePage" });
+  // Update the user store cache so avatar/name reflect immediately
+  if (authStore.address) {
+    userStore.setUser(authStore.address, {
+      address: authStore.address,
+      name: form.value.name,
+      about: form.value.about,
+      image: authStore.userInfo?.image ?? "",
+      site: form.value.site,
+      language: form.value.language,
+    });
+  }
+  saveSuccess.value = true;
+  setTimeout(() => (saveSuccess.value = false), 2000);
 };
 
-const handleAvatarUpload = (_file: File) => {
-  // TODO: Upload avatar via SDK imageServer
+// Avatar upload
+const fileInput = ref<HTMLInputElement>();
+const handleAvatarClick = () => fileInput.value?.click();
+const handleAvatarChange = (e: Event) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (file) {
+    // TODO: Upload avatar via SDK imageServer
+  }
 };
+
+const currentUser = computed(() =>
+  authStore.address ? userStore.getUser(authStore.address) : undefined,
+);
+
+// Load user profile eagerly
+watch(
+  () => authStore.address,
+  (addr) => { if (addr) userStore.loadUserIfMissing(addr); },
+  { immediate: true },
+);
 </script>
 
 <template>
-  <form class="space-y-4" @submit.prevent="handleSave">
-    <AvatarUpload
-      :current-image="authStore.userInfo?.image"
-      @upload="handleAvatarUpload"
-    />
-
-    <Input v-model="form.name" label="Name" placeholder="Your display name" />
-    <Input v-model="form.about" label="About" placeholder="Tell about yourself" />
-    <Input v-model="form.site" label="Website" placeholder="https://..." />
-    <Input v-model="form.language" label="Language" placeholder="en" />
-
-    <div class="flex gap-3">
-      <Button type="submit" :disabled="authStore.isEditingUserData">
-        {{ authStore.isEditingUserData ? "Saving..." : "Save" }}
-      </Button>
-      <Button variant="ghost" @click="router.back()">Cancel</Button>
+  <div class="flex flex-col">
+    <!-- Avatar section -->
+    <div class="flex flex-col items-center pb-6 pt-2">
+      <div class="group relative cursor-pointer" @click="handleAvatarClick">
+        <Avatar
+          :src="currentUser?.image"
+          :name="currentUser?.name || authStore.address || 'User'"
+          size="xl"
+        />
+        <div
+          class="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+        </div>
+      </div>
+      <input
+        ref="fileInput"
+        type="file"
+        accept="image/*"
+        class="hidden"
+        @change="handleAvatarChange"
+      />
     </div>
-  </form>
+
+    <!-- Form fields -->
+    <form class="flex flex-col gap-5" @submit.prevent="handleSave">
+      <!-- Name -->
+      <div class="rounded-xl bg-background-secondary-theme px-4">
+        <div class="flex items-center gap-3 border-b border-neutral-grad-0 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 text-text-on-main-bg-color">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+          </svg>
+          <div class="flex-1">
+            <label class="text-xs text-text-on-main-bg-color">{{ t("profile.name") }}</label>
+            <input
+              v-model="form.name"
+              type="text"
+              :placeholder="t('profile.displayName')"
+              class="block w-full bg-transparent text-sm text-text-color outline-none placeholder:text-neutral-grad-2"
+            />
+          </div>
+        </div>
+        <div class="flex items-start gap-3 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-0.5 shrink-0 text-text-on-main-bg-color">
+            <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-text-on-main-bg-color">{{ t("profile.bio") }}</label>
+              <span
+                class="text-[10px]"
+                :class="aboutCount > aboutMaxLength ? 'text-color-bad' : 'text-text-on-main-bg-color'"
+              >{{ aboutCount }}/{{ aboutMaxLength }}</span>
+            </div>
+            <textarea
+              v-model="form.about"
+              :placeholder="t('profile.bioPlaceholder')"
+              rows="2"
+              :maxlength="aboutMaxLength"
+              class="block w-full resize-none bg-transparent text-sm text-text-color outline-none placeholder:text-neutral-grad-2"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Additional info -->
+      <div class="rounded-xl bg-background-secondary-theme px-4">
+        <div class="flex items-center gap-3 border-b border-neutral-grad-0 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 text-text-on-main-bg-color">
+            <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+          <div class="flex-1">
+            <label class="text-xs text-text-on-main-bg-color">{{ t("profile.website") }}</label>
+            <input
+              v-model="form.site"
+              type="text"
+              placeholder="https://..."
+              class="block w-full bg-transparent text-sm text-text-color outline-none placeholder:text-neutral-grad-2"
+            />
+          </div>
+        </div>
+        <div class="flex items-center gap-3 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 text-text-on-main-bg-color">
+            <path d="M5 8l6 6" /><path d="M4 14l6 6" />
+            <rect x="2" y="2" width="8" height="8" rx="2" /><path d="M14 4h6v6" /><path d="M14 10l6-6" />
+          </svg>
+          <div class="flex-1">
+            <label class="text-xs text-text-on-main-bg-color">{{ t("profile.language") }}</label>
+            <select
+              :value="localeStore.locale"
+              class="block w-full bg-transparent text-sm text-text-color outline-none"
+              @change="localeStore.setLocale(($event.target as HTMLSelectElement).value as Locale)"
+            >
+              <option value="en">{{ t("locale.en") }}</option>
+              <option value="ru">{{ t("locale.ru") }}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Address (read-only) -->
+      <div v-if="authStore.address" class="rounded-xl bg-background-secondary-theme px-4">
+        <div class="flex items-center gap-3 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 text-text-on-main-bg-color">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <div class="flex-1 min-w-0">
+            <label class="text-xs text-text-on-main-bg-color">{{ t("profile.address") }}</label>
+            <p class="break-all text-sm text-text-color/60">{{ authStore.address }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save button -->
+      <button
+        type="submit"
+        :disabled="authStore.isEditingUserData || !hasChanges"
+        class="mx-auto flex h-11 w-full max-w-xs items-center justify-center rounded-xl text-sm font-semibold transition-all disabled:opacity-40"
+        :class="saveSuccess
+          ? 'bg-green-500 text-white'
+          : 'bg-color-bg-ac text-text-on-bg-ac-color hover:opacity-90'"
+      >
+        <template v-if="saveSuccess">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="mr-1.5">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          {{ t("profile.saved") }}
+        </template>
+        <template v-else-if="authStore.isEditingUserData">
+          {{ t("profile.saving") }}
+        </template>
+        <template v-else>
+          {{ t("profile.saveChanges") }}
+        </template>
+      </button>
+    </form>
+  </div>
 </template>

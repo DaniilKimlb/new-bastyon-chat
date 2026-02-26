@@ -54,18 +54,22 @@ onUnmounted(closeDrawer);
 </template>
 
 <style scoped>
-.fade-enter-active,
+.fade-enter-active {
+  transition: opacity 0.25s ease-out;
+}
 .fade-leave-active {
-  transition: opacity 0.15s;
+  transition: opacity 0.2s ease-in;
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
 }
 
-.slide-in-enter-active,
+.slide-in-enter-active {
+  transition: transform 0.25s ease-out;
+}
 .slide-in-leave-active {
-  transition: transform 0.15s ease-in;
+  transition: transform 0.2s ease-in;
 }
 .slide-in-enter-from,
 .slide-in-leave-to {

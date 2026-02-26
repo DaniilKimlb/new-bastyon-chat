@@ -1,5 +1,4 @@
 import { ref } from "vue";
-// @ts-expect-error — no detailed types for audio-recorder-polyfill
 import AudioRecorder from "audio-recorder-polyfill";
 // @ts-expect-error — no types for mpeg-encoder
 import mpegEncoder from "audio-recorder-polyfill/mpeg-encoder";

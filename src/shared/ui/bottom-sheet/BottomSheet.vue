@@ -80,28 +80,24 @@ const onDragEnd = () => {
 </template>
 
 <style scoped>
-.bs-fade-enter-active,
+.bs-fade-enter-active {
+  transition: opacity 0.25s ease-out;
+}
 .bs-fade-leave-active {
-  transition: opacity 0.2s;
+  transition: opacity 0.2s ease-in;
 }
 .bs-fade-enter-from,
 .bs-fade-leave-to {
   opacity: 0;
 }
-.bs-slide-enter-active,
+.bs-slide-enter-active {
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
 .bs-slide-leave-active {
-  transition: transform 0.3s ease;
+  transition: transform 0.2s ease-in;
 }
 .bs-slide-enter-from,
 .bs-slide-leave-to {
   transform: translateY(100%);
-}
-@media (prefers-reduced-motion: reduce) {
-  .bs-fade-enter-active,
-  .bs-fade-leave-active,
-  .bs-slide-enter-active,
-  .bs-slide-leave-active {
-    transition: none;
-  }
 }
 </style>

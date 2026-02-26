@@ -22,10 +22,10 @@ const ACCENT_COLORS = [
 export { ACCENT_COLORS };
 
 export const FONT_SIZE_MAP: Record<FontSize, string> = {
-  small: "13px",
-  default: "14px",
-  large: "16px",
-  xlarge: "18px",
+  small: "14px",
+  default: "16px",
+  large: "18px",
+  xlarge: "20px",
 };
 
 export const DENSITY_MAP: Record<MessageDensity, string> = {
@@ -136,6 +136,7 @@ export const useThemeStore = defineStore(NAMESPACE, () => {
   const setAnimationsEnabled = (v: boolean) => {
     animationsEnabled.value = v;
     setLSAnimations(v);
+    document.documentElement.setAttribute("data-animations", String(v));
   };
 
   // --- Chat wallpaper ---
@@ -225,6 +226,7 @@ export const useThemeStore = defineStore(NAMESPACE, () => {
     setTheme(isDarkMode.value ? Theme.dark : Theme.light);
     if (accentColor.value) applyAccentColor(accentColor.value);
     applyAllSettings();
+    document.documentElement.setAttribute("data-animations", String(animationsEnabled.value));
   };
 
   return {

@@ -16,6 +16,7 @@ const authStore = useAuthStore();
 const emit = defineEmits<{ back: [] }>();
 const { toast } = useToast();
 const { isOnline, isSlow } = useConnectivity();
+const { t } = useI18n();
 
 const showForwardPicker = ref(false);
 const showSearch = ref(false);
@@ -39,7 +40,7 @@ const handleSelectionCopy = () => {
   const ids = chatStore.selectedMessageIds;
   const msgs = chatStore.activeMessages.filter(m => ids.has(m.id));
   const text = msgs.map(m => m.content).join("\n");
-  navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard"));
+  navigator.clipboard.writeText(text).then(() => toast(t("chat.copiedToClipboard")));
   chatStore.exitSelectionMode();
 };
 
@@ -58,8 +59,8 @@ const typingText = computed(() => {
   const myAddr = authStore.address ?? "";
   const others = typingUsers.filter(id => id !== myAddr);
   if (others.length === 0) return "";
-  if (others.length === 1) return "typing...";
-  return `${others.length} typing...`;
+  if (others.length === 1) return t("chat.typing");
+  return t("chat.typingCount", { count: others.length });
 });
 
 /** Subtitle: typing indicator or member count */
@@ -67,7 +68,7 @@ const subtitle = computed(() => {
   if (typingText.value) return typingText.value;
   const room = chatStore.activeRoom;
   if (!room) return "";
-  if (room.isGroup) return `${room.members.length} members`;
+  if (room.isGroup) return t("chat.members", { count: room.members.length });
   return "";
 });
 
@@ -137,7 +138,7 @@ onUnmounted(() => {
     >
       <!-- Back button (mobile) -->
       <button
-        class="flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0 md:hidden"
+        class="btn-press flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0 md:hidden"
         @click="emit('back')"
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -157,7 +158,7 @@ onUnmounted(() => {
         />
         <Avatar v-else :src="chatStore.activeRoom.avatar" :name="chatStore.activeRoom.name" size="sm" />
         <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium text-text-color">
+          <div class="truncate text-[15px] font-medium text-text-color">
             {{ chatStore.activeRoom.name }}
           </div>
           <div
@@ -171,8 +172,8 @@ onUnmounted(() => {
 
       <!-- Search button -->
       <button
-        class="flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
-        title="Search"
+        class="btn-press flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
+        :title="t('chat.search')"
         @click="showSearch = !showSearch"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -182,8 +183,8 @@ onUnmounted(() => {
 
       <!-- Video call button -->
       <button
-        class="flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
-        title="Video call"
+        class="btn-press flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
+        :title="t('chat.videoCall')"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="23 7 16 12 23 17 23 7" />
@@ -193,8 +194,8 @@ onUnmounted(() => {
 
       <!-- More menu -->
       <button
-        class="flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
-        title="More"
+        class="btn-press flex h-11 w-11 items-center justify-center rounded-full text-text-on-main-bg-color transition-colors hover:bg-neutral-grad-0"
+        :title="t('chat.more')"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="12" cy="5" r="2" />
@@ -212,30 +213,32 @@ onUnmounted(() => {
       <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" class="opacity-30">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
-      <span class="text-sm">Select a chat to start messaging</span>
+      <span class="text-sm">{{ t("chat.selectToStart") }}</span>
     </div>
 
     <!-- Active room content -->
     <template v-if="chatStore.activeRoom">
       <!-- Connectivity banner -->
-      <div
-        v-if="!isOnline"
-        class="flex items-center justify-center gap-2 bg-color-bad px-3 py-1.5 text-xs font-medium text-white"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="1" y1="1" x2="23" y2="23" /><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" /><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" /><path d="M10.71 5.05A16 16 0 0 1 22.56 9" /><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" y1="20" x2="12.01" y2="20" />
-        </svg>
-        You are offline. Messages will be sent when connection is restored.
-      </div>
-      <div
-        v-else-if="isSlow"
-        class="flex items-center justify-center gap-2 bg-yellow-500 px-3 py-1.5 text-xs font-medium text-white"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        Slow connection detected
-      </div>
+      <transition name="banner-slide">
+        <div
+          v-if="!isOnline"
+          class="flex items-center justify-center gap-2 bg-color-bad px-3 py-1.5 text-xs font-medium text-white"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="1" y1="1" x2="23" y2="23" /><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" /><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" /><path d="M10.71 5.05A16 16 0 0 1 22.56 9" /><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" y1="20" x2="12.01" y2="20" />
+          </svg>
+          {{ t("chat.offline") }}
+        </div>
+        <div
+          v-else-if="isSlow"
+          class="flex items-center justify-center gap-2 bg-yellow-500 px-3 py-1.5 text-xs font-medium text-white"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          {{ t("chat.slowConnection") }}
+        </div>
+      </transition>
 
       <!-- Invite preview (not yet joined) -->
       <div
@@ -249,16 +252,16 @@ onUnmounted(() => {
         </div>
         <div>
           <h3 class="text-base font-semibold text-text-color">
-            Chat invitation
+            {{ t("chat.invitation") }}
           </h3>
           <p class="mt-1 text-sm text-text-on-main-bg-color">
             <template v-if="chatStore.activeRoom?.isGroup">
-              You're invited to join <span class="font-medium text-text-color">{{ chatStore.activeRoom.name }}</span>
+              {{ t("chat.inviteGroup", { name: chatStore.activeRoom.name }) }}
               <br />
-              <span class="text-xs">{{ chatStore.activeRoom.members.length }} members</span>
+              <span class="text-xs">{{ t("chat.members", { count: chatStore.activeRoom.members.length }) }}</span>
             </template>
             <template v-else>
-              <span class="font-medium text-text-color">{{ chatStore.activeRoom?.name }}</span> wants to chat with you
+              {{ t("chat.invitePersonal", { name: chatStore.activeRoom?.name ?? '' }) }}
             </template>
           </p>
         </div>
@@ -268,7 +271,7 @@ onUnmounted(() => {
             :disabled="inviteLoading"
             @click="handleDeclineInvite"
           >
-            Decline
+            {{ t("chat.decline") }}
           </button>
           <button
             class="flex-1 rounded-xl bg-color-bg-ac px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-color-bg-ac/90"
@@ -276,28 +279,33 @@ onUnmounted(() => {
             @click="handleAcceptInvite"
           >
             <span v-if="inviteLoading" class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-            <span v-else>Accept</span>
+            <span v-else>{{ t("chat.accept") }}</span>
           </button>
         </div>
       </div>
 
       <!-- Messages (joined room) -->
       <template v-else>
-        <ChatSearch
-          v-if="showSearch"
-          @close="closeSearch"
-          @scroll-to="handleScrollToMessage"
-          @update:query="handleSearchQuery"
-        />
+        <transition name="search-slide">
+          <ChatSearch
+            v-if="showSearch"
+            @close="closeSearch"
+            @scroll-to="handleScrollToMessage"
+            @update:query="handleSearchQuery"
+          />
+        </transition>
         <PinnedBar @scroll-to="handleScrollToMessage" />
         <MessageList ref="messageListRef" />
-        <SelectionBar
-          v-if="chatStore.selectionMode"
-          @forward="handleSelectionForward"
-          @copy="handleSelectionCopy"
-          @delete="handleSelectionDelete"
-        />
-        <MessageInput v-else />
+        <transition name="bar-slide-up" mode="out-in">
+          <SelectionBar
+            v-if="chatStore.selectionMode"
+            key="selection"
+            @forward="handleSelectionForward"
+            @copy="handleSelectionCopy"
+            @delete="handleSelectionDelete"
+          />
+          <MessageInput v-else key="input" />
+        </transition>
         <ForwardPicker
           :show="showForwardPicker"
           @close="showForwardPicker = false; chatStore.exitSelectionMode()"
@@ -308,3 +316,53 @@ onUnmounted(() => {
     <ChatInfoPanel :show="showInfoPanel" @close="showInfoPanel = false" />
   </div>
 </template>
+
+<style scoped>
+/* Search bar slides down from top */
+.search-slide-enter-active {
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.25s ease-out;
+}
+.search-slide-leave-active {
+  transition: transform 0.2s ease-in, opacity 0.2s ease-in;
+}
+.search-slide-enter-from {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+.search-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+/* Connectivity banner slides down */
+.banner-slide-enter-active {
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.25s ease-out;
+}
+.banner-slide-leave-active {
+  transition: transform 0.2s ease-in, opacity 0.2s ease-in;
+}
+.banner-slide-enter-from {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+.banner-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+/* SelectionBar slides up from bottom */
+.bar-slide-up-enter-active {
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.2s ease-out;
+}
+.bar-slide-up-leave-active {
+  transition: transform 0.15s ease-in, opacity 0.15s ease-in;
+}
+.bar-slide-up-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.bar-slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+</style>

@@ -123,6 +123,8 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string, nameH
       || (isHumanName(memberName) ? memberName : null)
       || (otherAddress && nameHints?.[otherAddress])
       || otherAddress
+      // If room name is a Matrix ID like @hexid:domain, extract and decode the address
+      || (name.startsWith("@") ? matrixIdToAddress(name) : null)
       || name;
   } else if (name.startsWith("#") && name.length > 20) {
     // Group with auto-generated hash name: build from member display names
@@ -175,6 +177,12 @@ export const useChatStore = defineStore(NAMESPACE, () => {
   const messages = ref<Record<string, Message[]>>({});
   const typing = ref<Record<string, string[]>>({});
   const replyingTo = ref<ReplyTo | null>(null);
+
+  // Cache for decrypted room previews — persists across refreshRooms() rebuilds
+  const decryptedPreviewCache = new Map<string, string>();
+
+  // Debounce timer for refreshRooms
+  let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Edit/delete state (Batch 3)
   const editingMessage = ref<{ id: string; content: string } | null>(null);
@@ -306,10 +314,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       const aPinned = pinnedRoomIds.value.has(a.id) ? 1 : 0;
       const bPinned = pinnedRoomIds.value.has(b.id) ? 1 : 0;
       if (aPinned !== bPinned) return bPinned - aPinned;
-      // Invitations above regular rooms
-      const aInvite = a.membership === "invite" ? 1 : 0;
-      const bInvite = b.membership === "invite" ? 1 : 0;
-      if (aInvite !== bInvite) return bInvite - aInvite;
+      // Chronological — most recent activity first (matches original bastyon-chat)
       return b.updatedAt - a.updatedAt;
     })
   );
@@ -324,13 +329,11 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     pcryptoRef.value = crypto;
   };
 
-  /** Refresh rooms list from Matrix SDK */
-  const refreshRooms = () => {
+  /** Internal: actual refresh logic (called by debounced wrapper) */
+  const refreshRoomsImmediate = () => {
     const matrixService = getMatrixClientService();
     const kit = matrixKitRef.value;
     if (!matrixService.isReady() || !kit) {
-      console.warn("[chat-store] refreshRooms skipped: ready=%s, kit=%s",
-        matrixService.isReady(), !!kit);
       return;
     }
 
@@ -339,50 +342,35 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     const matrixRooms = matrixService.getRooms() as any[];
 
     // Preserve existing room data — addRoom may have set good names that Matrix can't resolve yet
-    // (e.g., invited user's display name isn't available in Matrix state right after room creation)
     const prevNameMap = new Map(rooms.value.map(r => [r.id, r.name]));
     const prevActiveRoom = activeRoomId.value
       ? rooms.value.find(r => r.id === activeRoomId.value)
       : undefined;
 
     const interactiveRooms = matrixRooms.filter((r) => {
-      // Skip rooms that were deleted locally (leave/forget in progress)
       if (deletedRoomIds.value.has(r.roomId as string)) return false;
 
       const membership = r.selfMembership ?? r.getMyMembership?.();
       if (membership !== "join" && membership !== "invite") return false;
 
-      // Filter out spaces (m.space rooms)
       try {
         const createEvent = r.currentState?.getStateEvents?.("m.room.create", "");
         const createContent = createEvent?.getContent?.() ?? createEvent?.event?.content;
         if (createContent?.type === "m.space") return false;
       } catch { /* ignore */ }
 
-      // Filter rooms with no other members (self-only rooms)
-      // Invited rooms always pass — the invitee hasn't joined yet so memberCount is low
       if (membership === "invite") return true;
-      const memberCount = r.getJoinedMemberCount?.() ?? r.currentState?.getJoinedMemberCount?.() ?? 0;
-      if (memberCount < 2) {
-        // Always keep the active room (e.g. just-created room before invite accepted)
-        if (r.roomId === activeRoomId.value) return true;
-        // Keep rooms that have timeline events (could be an old chat where other member left)
-        const hasTimeline = (r.timeline?.length ?? 0) > 0 ||
-          (r.getLiveTimeline?.()?.getEvents?.()?.length ?? 0) > 0;
-        if (!hasTimeline) return false;
-      }
 
+      // Show all joined rooms — bastyon-chat doesn't filter by member count or timeline.
+      // Member counts can be zero right after sync when state isn't fully loaded yet.
       return true;
     });
 
     rooms.value = interactiveRooms
       .map((r) => {
         const chatRoom = matrixRoomToChatRoom(r, kit, myUserId, userDisplayNames.value);
-        // Preserve unreadCount=0 for active room — SDK hasn't processed the read receipt yet
         if (chatRoom.id === activeRoomId.value) chatRoom.unreadCount = 0;
 
-        // For 1:1 chats: if resolved name is not human-readable (hash/hex/address),
-        // try using the previously known name (set by addRoom from user store).
         if (!chatRoom.isGroup) {
           const addr = chatRoom.avatar?.startsWith("__pocketnet__:")
             ? chatRoom.avatar.slice("__pocketnet__:".length)
@@ -391,23 +379,32 @@ export const useChatStore = defineStore(NAMESPACE, () => {
             const prevName = prevNameMap.get(chatRoom.id);
             if (prevName && looksLikeProperName(prevName, addr)) {
               chatRoom.name = prevName;
+            } else if (chatRoom.name.startsWith("@") && chatRoom.name.includes(":")) {
+              // Name is a raw Matrix ID like @hexid:domain — decode to Bastyon address
+              chatRoom.name = matrixIdToAddress(chatRoom.name);
             }
           }
         }
 
-        // If we already have loaded messages for this room, use the latest as preview.
-        // This avoids "[encrypted]" for our own optimistic messages that are plaintext.
+        // Use loaded messages as preview (avoids "[encrypted]" for our own optimistic messages)
         const loadedMsgs = messages.value[chatRoom.id];
         if (loadedMsgs?.length) {
           chatRoom.lastMessage = loadedMsgs[loadedMsgs.length - 1];
           chatRoom.updatedAt = Math.max(chatRoom.updatedAt, chatRoom.lastMessage.timestamp);
         }
+
+        // Apply cached decrypted previews (survives across rebuilds)
+        if (chatRoom.lastMessage?.content === "[encrypted]") {
+          const cached = decryptedPreviewCache.get(chatRoom.id);
+          if (cached) chatRoom.lastMessage.content = cached;
+        }
+
         return chatRoom;
       })
-      // Filter out rooms with no messages (but always keep active room, invited rooms, and groups)
-      .filter((r) => r.lastMessage !== undefined || r.id === activeRoomId.value || r.membership === "invite" || r.isGroup);
+      // Show all rooms — matches original bastyon-chat behavior.
+      // The original only filters by deletedrooms (handled above in interactiveRooms filter).
+      ;
 
-    // If the active room was lost during rebuild (SDK hasn't synced yet), re-add from previous state
     if (prevActiveRoom && !rooms.value.some(r => r.id === prevActiveRoom.id)) {
       rooms.value.push(prevActiveRoom);
     }
@@ -425,31 +422,60 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       }
     }
 
-    // Decrypt [encrypted] previews asynchronously
+    // Decrypt [encrypted] previews asynchronously — results go to cache
     decryptRoomPreviews(interactiveRooms);
 
-    // Fire-and-forget: cache rooms to IndexedDB for instant load on next visit
+    // Fire-and-forget: cache rooms to IndexedDB
     cacheRooms(rooms.value).catch(() => {});
   };
 
-  /** Decrypt last-message previews for rooms that show [encrypted] */
+  /** Debounced refresh: batches multiple rapid calls into one (150ms window) */
+  const refreshRooms = () => {
+    if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+    refreshDebounceTimer = setTimeout(() => {
+      refreshDebounceTimer = null;
+      refreshRoomsImmediate();
+    }, 150);
+  };
+
+  /** Force immediate refresh (used after init when first load must be instant) */
+  const refreshRoomsNow = () => {
+    if (refreshDebounceTimer) {
+      clearTimeout(refreshDebounceTimer);
+      refreshDebounceTimer = null;
+    }
+    refreshRoomsImmediate();
+  };
+
+  /** Decrypt last-message previews for rooms that show [encrypted].
+   *  Results are stored in decryptedPreviewCache so they survive room list rebuilds. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const decryptRoomPreviews = async (matrixRooms: any[]) => {
+    // Collect rooms that need decryption
+    const toDecrypt: Array<{ roomId: string; matrixRoom: unknown }> = [];
     for (const matrixRoom of matrixRooms) {
       const roomId = matrixRoom.roomId as string;
+      if (decryptedPreviewCache.has(roomId)) continue; // already decrypted
       const room = rooms.value.find(r => r.id === roomId);
       if (!room?.lastMessage || room.lastMessage.content !== "[encrypted]") continue;
+      toDecrypt.push({ roomId, matrixRoom });
+    }
+    if (toDecrypt.length === 0) return;
 
+    // Decrypt all in parallel
+    await Promise.all(toDecrypt.map(async ({ roomId, matrixRoom }) => {
       try {
         const roomCrypto = await ensureRoomCrypto(roomId);
-        if (!roomCrypto) continue;
+        if (!roomCrypto) return;
 
-        // Find the last encrypted message event
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let timelineEvents: unknown[] = [];
         try {
-          const lt = matrixRoom.getLiveTimeline?.();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const lt = (matrixRoom as any).getLiveTimeline?.();
           if (lt) timelineEvents = lt.getEvents?.() ?? [];
-          if (!timelineEvents.length) timelineEvents = matrixRoom.timeline ?? [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if (!timelineEvents.length) timelineEvents = (matrixRoom as any).timeline ?? [];
         } catch { /* ignore */ }
 
         for (let i = timelineEvents.length - 1; i >= 0; i--) {
@@ -460,14 +486,23 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
           try {
             const decrypted = await roomCrypto.decryptEvent(raw);
-            if (decrypted.body && room.lastMessage) {
-              room.lastMessage.content = decrypted.body;
+            if (decrypted.body) {
+              // Store in persistent cache
+              decryptedPreviewCache.set(roomId, decrypted.body);
+              // Update current rooms.value reactively
+              const room = rooms.value.find(r => r.id === roomId);
+              if (room?.lastMessage) {
+                room.lastMessage = { ...room.lastMessage, content: decrypted.body };
+              }
             }
           } catch { /* leave as [encrypted] */ }
           break;
         }
       } catch { /* ignore */ }
-    }
+    }));
+
+    // Trigger reactivity once after all decryptions
+    triggerRef(rooms);
   };
 
   // Pending read receipt: sent when tab becomes visible
@@ -835,6 +870,62 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     }
   };
 
+  /** Build a human-readable system message for room state events */
+  const buildSystemMessage = (raw: Record<string, unknown>, roomId: string): Message | null => {
+    const content = raw.content as Record<string, unknown>;
+    const eventType = raw.type as string;
+    const sender = matrixIdToAddress(raw.sender as string);
+    const senderName = getDisplayName(sender) || sender.slice(0, 8) + "...";
+
+    let text = "";
+
+    if (eventType === "m.room.member") {
+      const membership = content.membership as string;
+      const stateKey = raw.state_key as string | undefined;
+      const targetAddr = stateKey ? matrixIdToAddress(stateKey) : sender;
+      const targetName = targetAddr !== sender
+        ? (getDisplayName(targetAddr) || targetAddr.slice(0, 8) + "...")
+        : senderName;
+      const isSelf = targetAddr === sender;
+
+      if (membership === "join") {
+        text = isSelf ? `${senderName} joined the chat` : `${senderName} added ${targetName}`;
+      } else if (membership === "leave") {
+        text = isSelf ? `${senderName} left the chat` : `${senderName} removed ${targetName}`;
+      } else if (membership === "ban") {
+        text = `${senderName} banned ${targetName}`;
+      } else if (membership === "invite") {
+        text = `${senderName} invited ${targetName}`;
+      } else {
+        return null;
+      }
+    } else if (eventType === "m.room.name") {
+      const newName = (content.name as string) || "";
+      // Room names in our system are often internal hashes — only show the
+      // human-readable name if it doesn't look like a hex hash.
+      const isHash = /^#?[0-9a-f]{20,}$/i.test(newName);
+      if (isHash || !newName) {
+        text = `${senderName} updated the room`;
+      } else {
+        text = `${senderName} changed the room name to "${newName}"`;
+      }
+    } else if (eventType === "m.room.power_levels") {
+      text = `${senderName} changed room permissions`;
+    } else {
+      return null;
+    }
+
+    return {
+      id: raw.event_id as string,
+      roomId,
+      senderId: sender,
+      content: text,
+      timestamp: (raw.origin_server_ts as number) ?? 0,
+      status: MessageStatus.sent,
+      type: MessageType.system,
+    };
+  };
+
   /** Parse a single timeline event into a Message (or null if not a message) */
   const parseSingleEvent = async (
     event: unknown,
@@ -842,7 +933,15 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     roomCrypto: PcryptoRoomInstance | undefined,
   ): Promise<Message | null> => {
     const raw = getRawEvent(event);
-    if (!raw?.content || raw.type !== "m.room.message") return null;
+    if (!raw?.content) return null;
+
+    // Handle state events as system messages
+    const stateEventTypes = ["m.room.member", "m.room.name", "m.room.power_levels"];
+    if (stateEventTypes.includes(raw.type as string)) {
+      return buildSystemMessage(raw, roomId);
+    }
+
+    if (raw.type !== "m.room.message") return null;
 
     const content = raw.content as Record<string, unknown>;
 
@@ -859,7 +958,8 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         try {
           const decrypted = await roomCrypto.decryptEvent(raw);
           body = decrypted.body;
-        } catch {
+        } catch (decErr) {
+          console.error("[decrypt] failed for event", raw.event_id, "error:", decErr);
           body = "[encrypted]";
         }
       } else {
@@ -936,6 +1036,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     const reactionEvents: Record<string, unknown>[] = [];
     const editEvents: Record<string, unknown>[] = [];
 
+    const stateEventTypes = ["m.room.member", "m.room.name", "m.room.power_levels"];
     for (const event of timelineEvents) {
       const raw = getRawEvent(event);
       if (!raw) continue;
@@ -948,6 +1049,9 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         } else {
           messageEvents.push(event);
         }
+      } else if (stateEventTypes.includes(raw.type as string) && raw.content) {
+        // State events: membership changes, room name changes, power level changes
+        messageEvents.push(event);
       } else {
         messageEvents.push(event);
       }
@@ -1273,6 +1377,16 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         return;
       }
 
+      // Handle state events (membership, room name, power levels) as system messages
+      const liveStateEventTypes = ["m.room.member", "m.room.name", "m.room.power_levels"];
+      if (liveStateEventTypes.includes(raw.type as string)) {
+        const sysMsg = buildSystemMessage(raw, roomId);
+        if (sysMsg) {
+          addMessage(roomId, sysMsg);
+        }
+        return;
+      }
+
       if (raw.type !== "m.room.message") return;
 
       const content = raw.content as Record<string, unknown>;
@@ -1395,9 +1509,6 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       if (roomId === activeRoomId.value) {
         sendReadReceiptIfVisible(roomId, event);
       }
-
-      // Also refresh rooms list to update sidebar
-      refreshRooms();
     } catch (e) {
       console.error("[chat-store] handleTimelineEvent error:", e);
     }
@@ -1638,6 +1749,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     pinnedRoomIds,
     cyclePinnedMessage,
     refreshRooms,
+    refreshRoomsNow,
     removeMessage,
     removeRoom,
     replyingTo,

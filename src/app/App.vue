@@ -60,9 +60,9 @@ onUnmounted(() => {
 <template>
   <div class="relative flex h-screen flex-col bg-background-total-theme text-text-color">
     <TitleBar v-if="isElectron" />
-    <div class="relative min-h-0 flex-1">
+    <div class="relative min-h-0 flex-1 overflow-hidden">
       <transition :name="isMobile ? '' : 'fade'" mode="out-in">
-        <router-view />
+        <router-view class="h-full" />
       </transition>
     </div>
     <Toast :message="toastMessage" :type="toastType" :show="toastShow" @close="toastClose" />

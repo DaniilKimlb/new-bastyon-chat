@@ -41,9 +41,9 @@ export const loadChatScripts = async (): Promise<void> => {
         if (isElectron && scriptName.startsWith("/")) return "." + scriptName;
         return scriptName;
       }
-      // In Electron: always use non-minified — not all scripts have .min variants
-      const suffix = IS_DEV || isElectron ? "" : ".min";
-      const name = `${scriptName}${suffix}.js`;
+      // Always load original .js — legacy scripts rely on ASI (newlines as
+      // implicit semicolons) and break when any minifier collapses whitespace.
+      const name = `${scriptName}.js`;
       if (isElectron && name.startsWith("/")) return "." + name;
       return name;
     };

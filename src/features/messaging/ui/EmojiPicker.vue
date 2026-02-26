@@ -197,23 +197,23 @@ const categoryTabs = computed(() => {
 
 <style scoped>
 .emoji-popup-enter-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .emoji-popup-leave-active {
-  transition: opacity 0.1s ease, transform 0.1s ease;
+  transition: opacity 0.12s ease-in, transform 0.12s ease-in;
 }
 .emoji-popup-enter-from {
   opacity: 0;
-  transform: scale(0.95);
+  transform: scale(0.85);
 }
 .emoji-popup-leave-to {
   opacity: 0;
-  transform: scale(0.95);
+  transform: scale(0.85);
 }
-@media (prefers-reduced-motion: reduce) {
-  .emoji-popup-enter-active,
-  .emoji-popup-leave-active {
-    transition: none;
-  }
+
+/* Smooth emoji button hover */
+.emoji-btn {
+  transition: transform 0.1s ease;
 }
 </style>

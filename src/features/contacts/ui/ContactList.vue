@@ -5,6 +5,7 @@ import type { ChatRoom, Message } from "@/entities/chat";
 import { MessageType } from "@/entities/chat";
 import { useAuthStore } from "@/entities/auth";
 import { formatRelativeTime } from "@/shared/lib/format";
+import { stripMentionAddresses } from "@/shared/lib/message-format";
 import { useLongPress } from "@/shared/lib/gestures";
 import { ContextMenu } from "@/shared/ui/context-menu";
 import type { ContextMenuItem } from "@/shared/ui/context-menu";
@@ -20,6 +21,7 @@ const props = withDefaults(defineProps<Props>(), { filter: "all" });
 
 const chatStore = useChatStore();
 const authStore = useAuthStore();
+const { t } = useI18n();
 const emit = defineEmits<{ selectRoom: [roomId: string] }>();
 
 const handleSelect = (room: ChatRoom) => {
@@ -30,27 +32,30 @@ const handleSelect = (room: ChatRoom) => {
 
 /** Format last message preview with type-aware icons */
 const formatPreview = (msg: Message | undefined, room: ChatRoom): string => {
-  if (!msg) return "No messages";
+  if (!msg) return t("contactList.noMessages");
   let preview: string;
   switch (msg.type) {
     case MessageType.image:
-      preview = msg.content && msg.content !== "[photo]" ? `📷 ${msg.content}` : "📷 Photo";
+      preview = msg.content && msg.content !== "[photo]" ? `📷 ${msg.content}` : "📷 " + t("message.photo");
       break;
     case MessageType.video:
-      preview = msg.content && msg.content !== "[video]" ? `🎬 ${msg.content}` : "🎬 Video";
+      preview = msg.content && msg.content !== "[video]" ? `🎬 ${msg.content}` : "🎬 " + t("message.video");
       break;
     case MessageType.audio:
-      preview = msg.content && msg.content !== "[voice message]" ? `🎤 ${msg.content}` : "🎤 Voice message";
+      preview = msg.content && msg.content !== "[voice message]" ? `🎤 ${msg.content}` : "🎤 " + t("message.voiceMessage");
       break;
     case MessageType.file:
-      preview = `📎 ${msg.content || "File"}`;
+      preview = `📎 ${msg.content || t("message.file")}`;
       break;
     case MessageType.system:
-      preview = msg.content;
-      break;
+      // System messages already contain the actor name, no sender prefix needed
+      return msg.content;
     default:
       preview = msg.content || "";
   }
+  // Strip mention hex addresses for preview (e.g. @hexid:Name → @Name)
+  preview = stripMentionAddresses(preview);
+
   // Add sender prefix for group chats
   if (room.isGroup && msg.senderId) {
     const myAddr = authStore.address ?? "";
@@ -187,7 +192,7 @@ const getRoomLongPress = (room: ChatRoom) => {
           <div class="min-w-0 flex-1">
             <!-- Name row: name + timestamp + pin/mute icons -->
             <div class="flex items-center justify-between gap-2">
-              <span class="flex items-center gap-1 truncate text-sm font-medium text-text-color">
+              <span class="flex items-center gap-1 truncate text-[15px] font-medium text-text-color">
                 {{ room.name }}
                 <svg v-if="chatStore.pinnedRoomIds.has(room.id)" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" class="shrink-0 text-text-on-main-bg-color">
                   <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
@@ -198,7 +203,7 @@ const getRoomLongPress = (room: ChatRoom) => {
               </span>
               <span
                 v-if="room.lastMessage"
-                class="shrink-0 text-[11px]"
+                class="shrink-0 text-xs"
                 :class="room.unreadCount > 0 ? 'text-color-bg-ac' : 'text-text-on-main-bg-color'"
               >
                 {{ formatRelativeTime(new Date(room.lastMessage.timestamp)) }}
@@ -209,7 +214,7 @@ const getRoomLongPress = (room: ChatRoom) => {
             <div class="mt-0.5 flex items-center justify-between gap-2">
               <span
                 v-if="getTypingText(room.id)"
-                class="truncate text-[13px] text-color-bg-ac"
+                class="truncate text-sm text-color-bg-ac"
               >
                 <span class="inline-flex gap-0.5 align-middle">
                   <span class="inline-block h-1 w-1 animate-bounce rounded-full bg-color-bg-ac [animation-delay:-0.3s]" />
@@ -218,19 +223,27 @@ const getRoomLongPress = (room: ChatRoom) => {
                 </span>
                 {{ getTypingText(room.id) }}
               </span>
-              <span v-else-if="room.membership === 'invite'" class="truncate text-[13px] italic text-color-bg-ac">
+              <span v-else-if="room.membership === 'invite'" class="truncate text-sm italic text-color-bg-ac">
                 Invitation to chat
               </span>
-              <span v-else class="truncate text-[13px] text-text-on-main-bg-color">
+              <span
+                v-else-if="room.lastMessage?.type === MessageType.system"
+                class="truncate text-sm italic text-text-on-main-bg-color"
+              >
                 {{ formatPreview(room.lastMessage, room) }}
               </span>
-              <span
-                v-if="room.unreadCount > 0"
-                class="flex h-[20px] min-w-[20px] shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-medium text-white"
-                :class="chatStore.mutedRoomIds.has(room.id) ? 'bg-neutral-grad-2' : 'bg-color-bg-ac'"
-              >
-                {{ room.unreadCount > 99 ? "99+" : room.unreadCount }}
+              <span v-else class="truncate text-sm text-text-on-main-bg-color">
+                {{ formatPreview(room.lastMessage, room) }}
               </span>
+              <transition name="badge-pop">
+                <span
+                  v-if="room.unreadCount > 0"
+                  class="flex h-[20px] min-w-[20px] shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-medium text-white"
+                  :class="chatStore.mutedRoomIds.has(room.id) ? 'bg-neutral-grad-2' : 'bg-color-bg-ac'"
+                >
+                  {{ room.unreadCount > 99 ? "99+" : room.unreadCount }}
+                </span>
+              </transition>
             </div>
           </div>
         </button>
@@ -278,3 +291,21 @@ const getRoomLongPress = (room: ChatRoom) => {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.badge-pop-enter-active {
+  animation: badge-bounce-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.badge-pop-leave-active {
+  transition: transform 0.15s ease-in, opacity 0.15s ease-in;
+}
+.badge-pop-leave-to {
+  opacity: 0;
+  transform: scale(0);
+}
+@keyframes badge-bounce-in {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+</style>

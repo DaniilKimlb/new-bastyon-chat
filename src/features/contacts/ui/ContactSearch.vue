@@ -8,6 +8,7 @@ import Avatar from "@/shared/ui/avatar/Avatar.vue";
 
 const { searchQuery, searchResults, isSearching, isCreatingRoom, debouncedSearch, getOrCreateRoom } = useContacts();
 const chatStore = useChatStore();
+const { t } = useI18n();
 
 const emit = defineEmits<{
   select: [address: string];
@@ -47,7 +48,7 @@ const matchingRooms = computed(() => {
   <div class="flex flex-col gap-2">
     <input
       v-model="searchQuery"
-      placeholder="Search chats or users..."
+      :placeholder="t('contactSearch.placeholder')"
       class="rounded-lg bg-chat-input-bg px-3 py-2 text-sm text-text-color outline-none placeholder:text-neutral-grad-2"
       @input="handleInput"
     />
@@ -56,20 +57,20 @@ const matchingRooms = computed(() => {
       <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
       </svg>
-      Searching...
+      {{ t("contactSearch.searching") }}
     </div>
 
     <div v-else-if="isCreatingRoom" class="flex items-center justify-center gap-2 p-3 text-sm text-text-on-main-bg-color">
       <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
       </svg>
-      Opening chat...
+      {{ t("contactSearch.openingChat") }}
     </div>
 
     <template v-else-if="searchQuery">
       <!-- Matching chats section -->
       <div v-if="matchingRooms.length" class="max-h-48 space-y-0.5 overflow-y-auto">
-        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-text-on-main-bg-color">Chats</div>
+        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-text-on-main-bg-color">{{ t("contactSearch.chats") }}</div>
         <button
           v-for="room in matchingRooms"
           :key="room.id"
@@ -83,14 +84,14 @@ const matchingRooms = computed(() => {
           />
           <Avatar v-else :src="room.avatar" :name="room.name" size="sm" />
           <div class="min-w-0 flex-1">
-            <div class="truncate text-sm font-medium text-text-color">{{ room.name }}</div>
+            <div class="truncate text-[15px] font-medium text-text-color">{{ room.name }}</div>
             <div class="truncate text-xs text-text-on-main-bg-color">
               {{ room.lastMessage?.content || "" }}
             </div>
           </div>
           <span
             v-if="room.lastMessage"
-            class="shrink-0 text-[11px] text-text-on-main-bg-color"
+            class="shrink-0 text-xs text-text-on-main-bg-color"
           >
             {{ formatRelativeTime(new Date(room.lastMessage.timestamp)) }}
           </span>
@@ -99,7 +100,7 @@ const matchingRooms = computed(() => {
 
       <!-- User search results section -->
       <div v-if="searchResults.length" class="max-h-48 space-y-0.5 overflow-y-auto">
-        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-text-on-main-bg-color">Users</div>
+        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-text-on-main-bg-color">{{ t("contactSearch.users") }}</div>
         <button
           v-for="user in searchResults"
           :key="user.address"
@@ -120,7 +121,7 @@ const matchingRooms = computed(() => {
         v-if="!matchingRooms.length && !searchResults.length && !isSearching"
         class="p-3 text-center text-sm text-text-on-main-bg-color"
       >
-        No chats or users found
+        {{ t("contactSearch.noResults") }}
       </div>
     </template>
   </div>

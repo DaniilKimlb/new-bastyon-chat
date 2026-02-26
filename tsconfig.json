@@ -22,7 +22,8 @@
       "@widgets/*": ["./src/widgets/*"],
       "@features/*": ["./src/features/*"],
       "@entities/*": ["./src/entities/*"],
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "miscreant": ["./src/shims-modules.d.ts"]
     },
     "types": ["node", "vite/client"]
   },

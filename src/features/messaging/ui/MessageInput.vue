@@ -70,7 +70,7 @@ const autoResize = () => {
   const el = textareaRef.value;
   if (!el) return;
   el.style.height = "auto";
-  const lineHeight = 22; // ~text-sm line height
+  const lineHeight = 24; // ~text-base line height
   const maxHeight = lineHeight * 6;
   el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
 };
@@ -324,7 +324,7 @@ const insertEmoji = (emoji: string) => {
 
       <!-- Emoji button (left of textarea) -->
       <button
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color/60 transition-colors hover:text-text-on-main-bg-color"
+        class="btn-press flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color/60 transition-colors hover:text-text-on-main-bg-color"
         title="Emoji"
         @click="(e: MouseEvent) => { const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); emojiPickerPos = { x: rect.left, y: rect.top }; showEmojiPicker = !showEmojiPicker; }"
       >
@@ -339,7 +339,7 @@ const insertEmoji = (emoji: string) => {
         v-model="text"
         placeholder="Message"
         rows="1"
-        class="flex-1 resize-none rounded-2xl bg-chat-input-bg px-4 py-2.5 text-sm leading-[22px] text-text-color outline-none placeholder:text-neutral-grad-2"
+        class="flex-1 resize-none rounded-2xl bg-chat-input-bg px-4 py-2.5 text-base leading-[24px] text-text-color outline-none placeholder:text-neutral-grad-2"
         :disabled="sending"
         @keydown="handleKeydown"
         @input="handleInput"
@@ -348,7 +348,7 @@ const insertEmoji = (emoji: string) => {
       <!-- Attachment button (right of textarea) -->
       <button
         ref="attachBtnRef"
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color/60 transition-colors hover:text-text-on-main-bg-color"
+        class="btn-press flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-on-main-bg-color/60 transition-colors hover:text-text-on-main-bg-color"
         :disabled="sending"
         title="Attach"
         @click="toggleAttachmentPanel"
@@ -358,51 +358,55 @@ const insertEmoji = (emoji: string) => {
         </svg>
       </button>
 
-      <!-- Send / Confirm edit button -->
-      <button
-        v-if="text.trim() || sending"
-        class="send-btn flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-color-bg-ac text-white transition-all hover:bg-color-bg-ac-1 disabled:opacity-50"
-        :disabled="!text.trim() || sending"
-        @click="handleSend"
-      >
-        <svg v-if="sending" class="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" viewBox="0 0 24 24" />
-        <svg
-          v-else-if="isEditing"
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="3"
+      <!-- Send / Confirm edit button (morphs with mic) -->
+      <transition name="btn-morph" mode="out-in">
+        <button
+          v-if="text.trim() || sending"
+          key="send"
+          class="send-btn flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-color-bg-ac text-white transition-all hover:bg-color-bg-ac-1 disabled:opacity-50"
+          :disabled="!text.trim() || sending"
+          @click="handleSend"
         >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        <svg
-          v-else
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-        >
-          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-        </svg>
-      </button>
+          <svg v-if="sending" class="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" viewBox="0 0 24 24" />
+          <svg
+            v-else-if="isEditing"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="3"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <svg
+            v-else
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+          >
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg>
+        </button>
 
-      <!-- Mic button (shown when input is empty) -->
-      <VoiceRecorder
-        v-else
-        :state="voiceRecorder.state.value"
-        :duration="voiceRecorder.duration.value"
-        :waveform-data="voiceRecorder.waveformData.value"
-        :recorded-blob="voiceRecorder.recordedBlob.value"
-        @start="voiceRecorder.startRecording()"
-        @start-locked="voiceRecorder.startAndLock()"
-        @stop-and-send="handleVoiceSend"
-        @stop-and-preview="voiceRecorder.stopAndPreview()"
-        @send-preview="handleVoicePreviewSend"
-        @lock="voiceRecorder.lock()"
-        @cancel="voiceRecorder.cancel()"
-      />
+        <!-- Mic button (shown when input is empty) -->
+        <VoiceRecorder
+          v-else
+          key="mic"
+          :state="voiceRecorder.state.value"
+          :duration="voiceRecorder.duration.value"
+          :waveform-data="voiceRecorder.waveformData.value"
+          :recorded-blob="voiceRecorder.recordedBlob.value"
+          @start="voiceRecorder.startRecording()"
+          @start-locked="voiceRecorder.startAndLock()"
+          @stop-and-send="handleVoiceSend"
+          @stop-and-preview="voiceRecorder.stopAndPreview()"
+          @send-preview="handleVoicePreviewSend"
+          @lock="voiceRecorder.lock()"
+          @cancel="voiceRecorder.cancel()"
+        />
+      </transition>
     </div>
 
     <EmojiPicker
@@ -465,5 +469,21 @@ const insertEmoji = (emoji: string) => {
 .input-bar-leave-from {
   max-height: 80px;
   opacity: 1;
+}
+
+/* Send/mic button morph */
+.btn-morph-enter-active {
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.15s ease;
+}
+.btn-morph-leave-active {
+  transition: transform 0.1s ease-in, opacity 0.1s ease-in;
+}
+.btn-morph-enter-from {
+  opacity: 0;
+  transform: scale(0.5);
+}
+.btn-morph-leave-to {
+  opacity: 0;
+  transform: scale(0.5);
 }
 </style>

@@ -8,4 +8,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
   close: () => ipcRenderer.send("win:close"),
   onMaximized: (cb) => ipcRenderer.on("win:maximized", cb),
   onUnmaximized: (cb) => ipcRenderer.on("win:unmaximized", cb),
+  torSetMode: (mode) => ipcRenderer.invoke("tor:set-mode", mode),
+  torGetStatus: () => ipcRenderer.invoke("tor:get-status"),
+  onTorStatus: (cb) => ipcRenderer.on("tor:status-changed", (_e, data) => cb(data)),
+});
+
+// Scoped IPC bridge for Service Worker ↔ Main process fetch proxy (Tor transport)
+contextBridge.exposeInMainWorld("fetchBridge", {
+  send: (channel, ...args) => {
+    if (typeof channel === 'string' && channel.startsWith('FetchBridge:'))
+      ipcRenderer.send(channel, ...args);
+  },
+  on: (channel, cb) => {
+    if (typeof channel === 'string' && channel.startsWith('FetchBridge:'))
+      ipcRenderer.on(channel, (_e, ...args) => cb(null, ...args));
+  },
+  invoke: (channel, ...args) => {
+    if (channel === 'AltTransportActive')
+      return ipcRenderer.invoke(channel, ...args);
+  },
 });

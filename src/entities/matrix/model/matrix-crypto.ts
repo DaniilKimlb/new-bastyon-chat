@@ -23,6 +23,18 @@ import { createChatStorage, type ChatStorageInstance } from "@/shared/lib/matrix
 const salt = "PR7srzZt4EfcNb3s27grgmiG8aB9vYNV82";
 const m = 12;
 
+/** Safe accessor for crypto.subtle — throws a clear error on HTTP instead of cryptic 'undefined' */
+function getSubtle(): SubtleCrypto {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error(
+      "crypto.subtle is unavailable (requires HTTPS or localhost). " +
+      "Serve the app over HTTPS to enable encryption."
+    );
+  }
+  return subtle;
+}
+
 // secp256k1 curve order
 const secp256k1CurveN = new BN(
   "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
@@ -62,15 +74,16 @@ class PcryptoFile {
   }
 
   async deriveKey(str: string): Promise<CryptoKey> {
+    const subtle = getSubtle();
     const enc = new TextEncoder();
-    const keyMaterial = await window.crypto.subtle.importKey(
+    const keyMaterial = await subtle.importKey(
       "raw",
       enc.encode(str),
       "PBKDF2",
       false,
       ["deriveBits", "deriveKey"]
     );
-    return window.crypto.subtle.deriveKey(
+    return subtle.deriveKey(
       { name: "PBKDF2", salt: enc.encode("matrix.pocketnet"), iterations: 10000, hash: "SHA-256" },
       keyMaterial,
       { name: "AES-CBC", length: 256 },
@@ -81,12 +94,12 @@ class PcryptoFile {
 
   async encrypt(data: ArrayBuffer, secret: string): Promise<ArrayBuffer> {
     const key = await this.deriveKey(secret);
-    return crypto.subtle.encrypt({ name: "AES-CBC", iv: this.iv }, key, data);
+    return getSubtle().encrypt({ name: "AES-CBC", iv: this.iv }, key, data);
   }
 
   async decrypt(data: ArrayBuffer, secret: string): Promise<ArrayBuffer> {
     const key = await this.deriveKey(secret);
-    return crypto.subtle.decrypt({ name: "AES-CBC", iv: this.iv }, key, data);
+    return getSubtle().decrypt({ name: "AES-CBC", iv: this.iv }, key, data);
   }
 
   async encryptFile(file: Blob, secret: string): Promise<File> {
@@ -410,10 +423,12 @@ export class Pcrypto {
     // ---- eaa object — EXACT match of original lines 405-527 ----
     const eaa = {
       cuhash: function (users: CryptoUserInfo[], num: number, block: number): Buffer {
+        const input = users.map(function (u) { return u.keys[num]; }).join("") + (block || pcrypto.currentblock.height);
+        if (num === 0) {
+          console.error("[cuhash] num=0 input=" + input.slice(0, 40) + "..." + input.slice(-10) + " len=" + input.length + " nUsers=" + users.length);
+        }
         return pbkdf2.pbkdf2Sync(
-          sha224(
-            users.map(function (u) { return u.keys[num]; }).join("") + (block || pcrypto.currentblock.height)
-          ).toString("hex"),
+          sha224(input).toString("hex"),
           salt,
           1,
           32,
@@ -503,6 +518,9 @@ export class Pcrypto {
       },
 
       aeskeys: function (time: number, block: number, usersIds: string[] | null, v: number) {
+        const _users = usersIds ? preparedUsersById(usersIds, v) : preparedUsers(time, v);
+        console.error("[aeskeys] users=" + _users.length + " ids=" + _users.map(u => u.id.slice(0,10)).join(",") + " sourceIds=" + _users.map(u => (u.source as any)?.id ?? "none").join(",") + " keyCounts=" + _users.map(u => u.keys.length).join(",") + " block=" + block + " v=" + v);
+
         const us = eaa.userspublics(time, block, usersIds, v);
         const c = eaa.current(time, block, usersIds, v);
 
@@ -511,14 +529,15 @@ export class Pcrypto {
 
         for (const [id, s] of Object.entries(us)) {
           if (id != pcrypto.user?.userinfo?.id) {
-            su[id] = bitcoin.ecc.pointMultiply(s, c, undefined, true);
+            const ecdhPoint = bitcoin.ecc.pointMultiply(s, c, undefined, true);
             su[id] = pbkdf2.pbkdf2Sync(
-              su[id].toString("hex"),
+              ecdhPoint.toString("hex"),
               salt,
               64,
               32,
               "sha512"
             );
+            console.error("[aeskeys] derived key for " + id.slice(0,10) + " ecdhPoint=" + ecdhPoint.toString("hex").slice(0,20) + " aesKey=" + Buffer.from(su[id]).toString("hex").slice(0,16) + " cScalar=" + c.toString("hex").slice(0,16) + " sPoint=" + s.toString("hex").slice(0,20));
           }
         }
 
@@ -700,6 +719,8 @@ export class Pcrypto {
           throw new Error("emptyforme");
         }
 
+        console.error("[decryptEvent] sender=" + sender.slice(0,10) + " me=" + me.slice(0,10) + " keyindex=" + (keyindex?.slice(0,10) ?? "?") + " bodyindex=" + (bodyindex?.slice(0,10) ?? "?") + " block=" + block + " version=" + eventVersion + " bodyKeys=" + Object.keys(body).map(k => k.slice(0,10)).join(","));
+
         // self.decrypt — match original lines 529-556
         const decrypted = await room._decrypt(keyindex!, body[bodyindex], time, block, null, eventVersion);
 
@@ -737,6 +758,7 @@ export class Pcrypto {
         if (!commonKeyEvt) {
           throw new Error("No common key event found for hash=" + hash);
         }
+        console.error("[decryptEventGroup] sender=" + sender.slice(0,10) + " hash=" + hash.slice(0,10) + " commonKeyEvt.type=" + ((commonKeyEvt as any).type ?? "?") + " commonKeyEvt.sender=" + ((commonKeyEvt as any).sender ?? "?").slice(0,20));
         // Decrypt the common key (AES-SIV per-user encrypted key)
         let commonKey: string;
         commonKey = await room.decryptKey(commonKeyEvt);
@@ -846,6 +868,8 @@ export class Pcrypto {
         }
 
         const keys = eaa.aeskeys(_time, _block, usersIds, v || version);
+
+        console.error("[_decrypt] userid=" + userid.slice(0,10) + " rawBlock=" + block + " block=" + _block + " time=" + _time + " v=" + (v || version) + " hasKey=" + !!keys[userid] + " keyIds=" + Object.keys(keys).map(k => k.slice(0,10)).join(",") + " encLen=" + ((encData as any)?.encrypted?.length ?? 0));
 
         if (keys[userid]) {
           return await decrypt(keys[userid], encData);
@@ -964,6 +988,8 @@ export class Pcrypto {
         if (!bodyindex || !body[bodyindex]) {
           throw new Error("emptyforme");
         }
+
+        console.error("[decryptKey] sender=" + sender.slice(0,10) + " me=" + me.slice(0,10) + " keyindex=" + (keyindex?.slice(0,10) ?? "?") + " bodyindex=" + (bodyindex?.slice(0,10) ?? "?") + " block=" + block + " v=" + v + " usersList=" + usersList.map(u => u.slice(0,10)).join(",") + " bodyUsers=" + bodyUsers.map(u => u.slice(0,10)).join(","));
 
         // Pass usersList to _decrypt (matches original which passes users array)
         return room._decrypt(keyindex!, body[bodyindex], time, block, usersList, v);

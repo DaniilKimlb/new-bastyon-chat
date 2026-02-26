@@ -27,7 +27,11 @@ export default defineConfig({
       dts: true
     }),
     AutoImport({
-      imports: ["vue", "vue-router"],
+      imports: [
+        "vue",
+        "vue-router",
+        { "@/shared/lib/i18n": ["useI18n"] },
+      ],
       include: [
         /\.[tj]sx?$/,
         /\.vue$/,

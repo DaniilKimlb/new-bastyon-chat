@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick, onUnmounted, provide } from "vue";
-import { useChatStore } from "@/entities/chat";
+import { useChatStore, MessageType } from "@/entities/chat";
 import { useAuthStore } from "@/entities/auth";
 import { useThemeStore } from "@/entities/theme";
 import { isConsecutiveMessage } from "@/entities/chat/lib/message-utils";
@@ -176,7 +176,7 @@ const checkScroll = () => {
 
 const scrollToBottom = (smooth = false) => {
   newMessageCount.value = 0;
-  nextTick(() => {
+  const doScroll = () => {
     if (scrollerRef.value) {
       scrollerRef.value.scrollToBottom();
     } else if (listRef.value) {
@@ -185,6 +185,12 @@ const scrollToBottom = (smooth = false) => {
         behavior: smooth ? "smooth" : "instant",
       });
     }
+  };
+  nextTick(() => {
+    doScroll();
+    // DynamicScroller may need extra time to finish layout after virtual items update
+    setTimeout(doScroll, 50);
+    setTimeout(doScroll, 150);
   });
 };
 
@@ -195,6 +201,7 @@ watch(
     if (roomId) {
       loading.value = true;
       newMessageCount.value = 0;
+      recentMessageIds.value.clear();
       try {
         await loadMessages(roomId);
       } finally {
@@ -206,7 +213,11 @@ watch(
   { immediate: true },
 );
 
+// --- Message entrance animation ---
+const recentMessageIds = ref(new Set<string>());
+
 // Auto-scroll only if user is near bottom; otherwise increment new message count
+// Also track new real-time messages for entrance animation
 watch(
   () => chatStore.activeMessages.length,
   (newLen, oldLen) => {
@@ -215,8 +226,24 @@ watch(
     } else if (oldLen !== undefined && newLen > oldLen) {
       newMessageCount.value += newLen - oldLen;
     }
+    // Track newly arrived messages for entrance animation (only appended, not paginated)
+    if (!loading.value && oldLen !== undefined && newLen > oldLen) {
+      const msgs = chatStore.activeMessages;
+      for (let i = oldLen; i < newLen; i++) {
+        if (msgs[i]) recentMessageIds.value.add(msgs[i].id);
+      }
+      setTimeout(() => {
+        const ids = chatStore.activeMessages.slice(oldLen, newLen).map(m => m.id);
+        ids.forEach(id => recentMessageIds.value.delete(id));
+      }, 350);
+    }
   },
 );
+
+const getMsgEnterClass = (message: import("@/entities/chat").Message): string => {
+  if (!recentMessageIds.value.has(message.id)) return "";
+  return message.senderId === authStore.address ? "msg-enter-own" : "msg-enter-other";
+};
 
 // --- Floating date header ---
 const currentDateLabel = ref("");
@@ -419,9 +446,21 @@ defineExpose({ scrollToMessage, setSearchQuery });
             </span>
           </div>
 
+          <!-- System message (join/leave/kick/name change) -->
+          <div
+            v-else-if="item.type === 'message' && item.message && item.message.type === MessageType.system"
+            class="flex justify-center py-2"
+            :data-message-id="item.message.id"
+          >
+            <span class="rounded-full bg-neutral-grad-0/60 px-3 py-1 text-center text-[11px] text-text-on-main-bg-color">
+              {{ item.message.content }}
+            </span>
+          </div>
+
           <!-- Message (wrapped with padding — DynamicScroller ignores margins for height calc) -->
           <div
             v-else-if="item.type === 'message' && item.message"
+            :class="getMsgEnterClass(item.message)"
             :style="(item.index ?? 0) > 0 ? { paddingTop: 'var(--message-spacing)' } : {}"
             :data-message-id="item.message.id"
           >
@@ -561,6 +600,14 @@ defineExpose({ scrollToMessage, setSearchQuery });
 .modal-fade-enter-from,
 .modal-fade-leave-to {
   opacity: 0;
+}
+
+/* Message entrance animations */
+.msg-enter-own {
+  animation: msg-in-own 0.25s ease-out both;
+}
+.msg-enter-other {
+  animation: msg-in-other 0.25s ease-out both;
 }
 </style>
 

@@ -44,14 +44,22 @@ const handleAddReaction = () => {
   emit("addReaction", props.message);
 };
 
-const { onPointerdown, onPointermove, onPointerup, onPointerleave } = useLongPress({
+const longPressTriggered = ref(false);
+const { onPointerdown: lpPointerdown, onPointermove, onPointerup: lpPointerup, onPointerleave: lpPointerleave } = useLongPress({
   onTrigger: (e) => {
+    longPressTriggered.value = true;
     emit("contextmenu", { message: props.message, x: e.clientX, y: e.clientY });
   },
 });
+const onPointerdown = (e: PointerEvent) => {
+  longPressTriggered.value = false;
+  lpPointerdown(e);
+};
+const onPointerup = () => { lpPointerup(); };
+const onPointerleave = () => { lpPointerleave(); };
 
 const handleRightClick = (e: MouseEvent) => {
-  e.preventDefault();
+  // .prevent modifier already calls preventDefault
   emit("contextmenu", { message: props.message, x: e.clientX, y: e.clientY });
 };
 
@@ -190,14 +198,14 @@ const replyPreviewText = computed(() => {
 
 <template>
   <div
-    class="group relative flex gap-2"
+    class="group relative flex gap-2 select-none"
     :class="props.isOwn ? 'flex-row-reverse' : 'flex-row'"
     :style="swipeStyle"
     @pointerdown="onPointerdown"
     @pointermove="onPointermove"
     @pointerup="onPointerup"
     @pointerleave="onPointerleave"
-    @contextmenu="handleRightClick"
+    @contextmenu.prevent="handleRightClick"
     @touchstart="onTouchstart"
     @touchmove="onTouchmove"
     @touchend="onTouchend"
@@ -495,7 +503,7 @@ const replyPreviewText = computed(() => {
         <!-- Sender name in groups -->
         <div
           v-if="props.isGroup && !props.isOwn && props.isFirstInGroup"
-          class="mb-0.5 text-[13px] font-medium"
+          class="mb-0.5 text-sm font-semibold"
           :style="{ color: senderColor }"
         >
           {{ chatStore.getDisplayName(message.senderId) }}

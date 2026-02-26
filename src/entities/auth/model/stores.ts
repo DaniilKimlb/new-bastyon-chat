@@ -10,7 +10,7 @@ import {
   Pcrypto,
 } from "@/entities/matrix";
 import type { UserWithPrivateKeys } from "@/entities/matrix/model/matrix-crypto";
-import { getmatrixid, hexDecode } from "@/shared/lib/matrix/functions";
+import { getmatrixid } from "@/shared/lib/matrix/functions";
 import { useLocalStorage } from "@/shared/lib/browser";
 import { convertToHexString } from "@/shared/lib/convert-to-hex-string";
 import { mergeObjects } from "@/shared/lib/merge-objects";
@@ -193,9 +193,25 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
               const rawAddr = rawAddresses[idx];
               const sdkUser = appInitializer.getUserData(rawAddr);
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const sdkKeys: string[] = (sdkUser as any)?.keys ?? [];
+              let keys: string[] = (sdkUser as any)?.keys ?? [];
               const rawProfile = rawProfileMap.get(rawAddr);
-              return { id: hexId, keys: sdkKeys, source: rawProfile };
+              const sdkPath = keys.length > 0;
+
+              // Fallback: if SDK keys empty (e.g. filterXSS error in cleanData),
+              // extract keys directly from raw RPC response (k or keys field)
+              if (keys.length === 0 && rawProfile) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const rawKeys = (rawProfile as any).k ?? (rawProfile as any).keys ?? "";
+                if (Array.isArray(rawKeys)) {
+                  keys = rawKeys.filter((k: string) => k);
+                } else if (typeof rawKeys === "string" && rawKeys) {
+                  keys = rawKeys.split(",").filter((k: string) => k);
+                }
+              }
+
+              console.error("[getUsersInfo] id=" + hexId.slice(0,10) + " sdkPath=" + sdkPath + " sdkKeys=" + ((sdkUser as any)?.keys?.length ?? 0) + " finalKeys=" + keys.length + " k0=" + (keys[0]?.slice(0,10) ?? "none") + " sdkUser=" + (sdkUser ? "yes" : "no"));
+
+              return { id: hexId, keys, source: rawProfile };
             });
           } catch (e) {
             console.error("[pcrypto] getUsersInfo error:", e);
@@ -270,6 +286,10 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
         console.log("[auth] Matrix client ready!");
         matrixReady.value = true;
         matrixError.value = null;
+
+        // Explicitly load rooms immediately — the onSync callback may have
+        // already fired before handlers were wired.
+        chatStore.refreshRoomsNow();
       } else {
         console.error("[auth] Matrix client NOT ready, error:", matrixService.error);
         matrixError.value = matrixService.error || "Matrix init failed";

@@ -1,0 +1,274 @@
+import type { TranslationKey } from "./en";
+
+export const ru: Record<TranslationKey, string> = {
+  // ── Navigation / Sidebar ──
+  "nav.chats": "Чаты",
+  "nav.contacts": "Контакты",
+  "nav.settings": "Настройки",
+  "nav.searchUsers": "Поиск пользователей",
+  "nav.newGroup": "Новая группа",
+
+  // ── Contacts panel ──
+  "contacts.searchPlaceholder": "Поиск контактов...",
+  "contacts.noFound": "Контакты не найдены",
+  "contacts.noYet": "Контактов пока нет",
+
+  // ── Contact list ──
+  "contactList.noConversations": "Диалогов пока нет",
+  "contactList.inviteToChat": "Приглашение в чат",
+  "contactList.noMessages": "Нет сообщений",
+  "contactList.you": "Вы",
+  "contactList.typing": "печатает...",
+  "contactList.typingCount": "{count} печатают...",
+  "contactList.pin": "Закрепить",
+  "contactList.unpin": "Открепить",
+  "contactList.mute": "Отключить уведомления",
+  "contactList.unmute": "Включить уведомления",
+  "contactList.markAsRead": "Прочитать",
+  "contactList.delete": "Удалить",
+  "contactList.deleteChat": "Удалить чат?",
+  "contactList.deleteChatConfirm": "Вы действительно хотите выйти и удалить этот чат?",
+  "contactList.cancel": "Отмена",
+
+  // ── Contact search ──
+  "contactSearch.placeholder": "Поиск чатов или пользователей...",
+  "contactSearch.searching": "Поиск...",
+  "contactSearch.openingChat": "Открываем чат...",
+  "contactSearch.chats": "Чаты",
+  "contactSearch.users": "Пользователи",
+  "contactSearch.noResults": "Чаты и пользователи не найдены",
+
+  // ── Folder tabs ──
+  "tabs.all": "Все",
+  "tabs.personal": "Личные",
+  "tabs.groups": "Группы",
+  "tabs.invites": "Заявки",
+
+  // ── Settings panel ──
+  "settings.title": "Настройки",
+  "settings.myProfile": "Мой профиль",
+  "settings.appearance": "Оформление",
+  "settings.darkMode": "Тёмная тема",
+  "settings.torProxy": "Tor-прокси",
+  "settings.torFailed": "Не удалось запустить Tor. Попробуйте выключить и включить снова.",
+  "settings.logout": "Выйти",
+  "settings.anonymous": "Аноним",
+  "settings.notifications": "Уведомления",
+  "settings.enabled": "Включены",
+  "settings.privacy": "Приватность",
+
+  // ── Settings content / Appearance ──
+  "settings.editProfile": "Редактировать профиль",
+  "appearance.theme": "Тема",
+  "appearance.light": "Светлая",
+  "appearance.dark": "Тёмная",
+  "appearance.accentColor": "Цвет акцента",
+  "appearance.custom": "Свой",
+  "appearance.apply": "Применить",
+  "appearance.cancel": "Отмена",
+  "appearance.chatBackground": "Фон чата",
+  "appearance.chatBackgroundDesc": "Настройте фон области чата",
+  "appearance.fontSize": "Размер шрифта",
+  "appearance.fontSizePreview": "Пример текста текущего размера",
+  "appearance.messageDensity": "Плотность сообщений",
+  "appearance.messageDensityDesc": "Расстояние между сообщениями",
+  "appearance.compact": "Компактно",
+  "appearance.default": "Обычно",
+  "appearance.comfortable": "Свободно",
+  "appearance.bubbleCorners": "Углы пузырей",
+  "appearance.sharp": "Острые",
+  "appearance.round": "Круглые",
+  "appearance.chatOptions": "Настройки чата",
+  "appearance.showAvatars": "Аватары в чатах",
+  "appearance.showTimestamps": "Время сообщений",
+  "appearance.groupMessages": "Группировать сообщения",
+  "appearance.enableAnimations": "Анимации",
+  "appearance.quickReactions": "Быстрые реакции",
+  "appearance.quickReactionsDesc": "Настройте эмодзи в контекстном меню",
+  "appearance.edit": "Изменить",
+  "appearance.reset": "Сброс",
+  "appearance.done": "Готово",
+  "appearance.tapToReplace": "Нажмите на эмодзи, чтобы заменить",
+  "appearance.resetToDefaults": "Сбросить настройки",
+  "appearance.resetAppearance": "Сбросить оформление?",
+  "appearance.resetConfirm": "Все настройки оформления будут сброшены к значениям по умолчанию.",
+
+  // ── Chat window ──
+  "chat.selectToStart": "Выберите чат, чтобы начать общение",
+  "chat.offline": "Вы офлайн. Сообщения будут отправлены при восстановлении связи.",
+  "chat.slowConnection": "Медленное соединение",
+  "chat.invitation": "Приглашение в чат",
+  "chat.inviteGroup": "Вас приглашают в {name}",
+  "chat.invitePersonal": "{name} хочет начать чат с вами",
+  "chat.decline": "Отклонить",
+  "chat.accept": "Принять",
+  "chat.search": "Поиск",
+  "chat.videoCall": "Видеозвонок",
+  "chat.more": "Ещё",
+  "chat.typing": "печатает...",
+  "chat.typingCount": "{count} печатают...",
+  "chat.members": "{count} участн.",
+  "chat.copiedToClipboard": "Скопировано в буфер обмена",
+
+  // ── Title bar ──
+  "titleBar.appName": "Bastyon Chat",
+  "titleBar.minimize": "Свернуть",
+  "titleBar.maximize": "Развернуть",
+  "titleBar.close": "Закрыть",
+
+  // ── User edit form ──
+  "profile.name": "Имя",
+  "profile.displayName": "Ваше отображаемое имя",
+  "profile.bio": "О себе",
+  "profile.bioPlaceholder": "Расскажите о себе",
+  "profile.website": "Сайт",
+  "profile.language": "Язык",
+  "profile.address": "Адрес",
+  "profile.saveChanges": "Сохранить",
+  "profile.saved": "Сохранено",
+  "profile.saving": "Сохранение...",
+
+  // ── Message input ──
+  "message.editing": "Редактирование",
+  "message.placeholder": "Сообщение",
+  "message.emoji": "Эмодзи",
+  "message.attach": "Прикрепить",
+  "message.photo": "Фото",
+  "message.video": "Видео",
+  "message.voiceMessage": "Голосовое сообщение",
+  "message.file": "Файл",
+
+  // ── Message context menu ──
+  "contextMenu.reply": "Ответить",
+  "contextMenu.copy": "Копировать",
+  "contextMenu.forward": "Переслать",
+  "contextMenu.edit": "Редактировать",
+  "contextMenu.select": "Выбрать",
+  "contextMenu.pin": "Закрепить",
+  "contextMenu.delete": "Удалить",
+  "contextMenu.moreReactions": "Больше реакций",
+
+  // ── Message list ──
+  "messageList.noMessages": "Сообщений пока нет. Начните беседу!",
+  "messageList.isTyping": "{name} печатает",
+  "messageList.peopleTyping": "{count} чел. печатают",
+  "messageList.deleteMessage": "Удалить сообщение?",
+  "messageList.deleteForEveryone": "Удалить у всех",
+  "messageList.deleteForMe": "Удалить у меня",
+  "messageList.cancel": "Отмена",
+
+  // ── Attachment panel ──
+  "attachment.photoOrVideo": "Фото или видео",
+  "attachment.file": "Файл",
+
+  // ── Voice recorder ──
+  "voice.slideToCancel": "< Сдвиньте для отмены",
+  "voice.cancel": "Отмена",
+  "voice.stopAndPreview": "Стоп и просмотр",
+  "voice.send": "Отправить",
+  "voice.discard": "Удалить",
+  "voice.voiceMessage": "Голосовое сообщение",
+
+  // ── Chat search ──
+  "chatSearch.placeholder": "Поиск в чате...",
+  "chatSearch.noResults": "Ничего не найдено",
+  "chatSearch.counter": "{current} из {total}",
+
+  // ── Emoji picker ──
+  "emoji.searchPlaceholder": "Поиск эмодзи...",
+  "emoji.recent": "Недавние",
+
+  // ── Forward picker ──
+  "forward.title": "Переслать в...",
+  "forward.selected": "{count} выбрано",
+  "forward.searchPlaceholder": "Поиск чатов...",
+  "forward.noChats": "Чаты не найдены",
+  "forward.includeSender": "Указать отправителя",
+  "forward.sending": "Отправка...",
+  "forward.button": "Переслать ({count})",
+  "forward.success": "Переслано {msgCount} сообщ. в {roomCount} чат(ов)",
+  "forward.failed": "Не удалось переслать",
+
+  // ── Pinned bar ──
+  "pinned.message": "Закреплённое сообщение",
+  "pinned.next": "Следующее закреплённое",
+  "pinned.unpin": "Открепить",
+
+  // ── Media preview ──
+  "media.addCaption": "Добавить подпись...",
+  "media.captionBelow": "Подпись снизу",
+  "media.captionAbove": "Подпись сверху",
+
+  // ── Selection bar ──
+  "selection.selected": "{count} выбрано",
+  "selection.forward": "Переслать",
+  "selection.copy": "Копировать",
+  "selection.delete": "Удалить",
+
+  // ── Group creation ──
+  "group.newGroup": "Новая группа",
+  "group.next": "Далее",
+  "group.searchUsers": "Поиск пользователей...",
+  "group.noUsersFound": "Пользователи не найдены",
+  "group.searchToAdd": "Найдите пользователей для добавления в группу",
+  "group.groupName": "Название группы",
+  "group.creating": "Создание...",
+  "group.create": "Создать",
+  "group.memberCount": "{count} участн.",
+
+  // ── Chat info panel ──
+  "info.title": "Инфо",
+  "info.directMessage": "Личное сообщение",
+  "info.members": "{count} участн.",
+  "info.notifications": "Уведомления",
+  "info.shared": "Общие файлы",
+  "info.media": "{count} медиа",
+  "info.files": "{count} файлов",
+  "info.membersHeader": "Участники ({count})",
+  "info.add": "Добавить",
+  "info.searchToAdd": "Поиск пользователей...",
+  "info.noUsersFound": "Пользователи не найдены",
+  "info.admin": "админ",
+  "info.adminLabel": "Админ",
+  "info.leaveGroup": "Покинуть группу",
+  "info.deleteChat": "Удалить чат",
+  "info.deleteGroupForAll": "Удалить группу для всех",
+  "info.deleteGroupConfirm": "Все участники будут исключены, а группа удалена. Вы уверены?",
+  "info.leaveGroupConfirm": "Вы действительно хотите покинуть эту группу?",
+  "info.deleteChatConfirm": "Вы действительно хотите удалить этот чат?",
+  "info.cancel": "Отмена",
+  "info.delete": "Удалить",
+  "info.leave": "Покинуть",
+  "info.removeAdmin": "Снять администратора",
+  "info.makeAdmin": "Назначить администратором",
+  "info.removeFromGroup": "Исключить из группы",
+
+  // ── Video calls ──
+  "call.incoming": "Входящий звонок",
+
+  // ── Auth / Login ──
+  "auth.signIn": "Войти",
+  "auth.enterKey": "Введите приватный ключ или мнемоническую фразу Bastyon",
+  "auth.signingIn": "Вход...",
+  "auth.keyNeverLeaves": "Ваш приватный ключ не покидает устройство",
+  "auth.enterKeyError": "Введите приватный ключ или мнемоническую фразу",
+  "auth.privateKeyLabel": "Приватный ключ или мнемоника",
+  "auth.privateKeyPlaceholder": "Введите приватный ключ (WIF/hex) или мнемоническую фразу...",
+  "auth.show": "Показать",
+  "auth.hide": "Скрыть",
+
+  // ── Welcome ──
+  "welcome.title": "Bastyon Chat",
+  "welcome.description": "Децентрализованный мессенджер с видеозвонками. Приватный, безопасный и устойчивый к цензуре.",
+  "welcome.getStarted": "Начать",
+
+  // ── Tor status ──
+  "tor.connected": "Подключён",
+  "tor.connecting": "Подключение...",
+  "tor.error": "Ошибка",
+  "tor.off": "Выкл",
+
+  // ── Language names ──
+  "locale.en": "English",
+  "locale.ru": "Русский",
+};

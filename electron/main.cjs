@@ -1,5 +1,6 @@
-const { app, BrowserWindow, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, protocol, net, session } = require("electron");
 const path = require("path");
+const { initTor } = require("./tor/index.cjs");
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 try {
@@ -9,6 +10,19 @@ try {
 } catch (_) {
   // electron-squirrel-startup only needed for Windows NSIS installs
 }
+
+// Register app:// as a privileged scheme (must happen before app.whenReady)
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'app',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+    stream: true,
+    codeCache: true,
+  },
+}]);
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -56,18 +70,69 @@ function createWindow() {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
     win.webContents.openDevTools();
   } else {
-    // Preview / Prod: load the built dist/index.html
-    win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    // Prod: load via app:// protocol (required for Service Worker registration)
+    win.loadURL('app://chat/index.html');
   }
 }
 
+let torControl = null;
+
 app.whenReady().then(() => {
+  // Handle app:// protocol — serves files from dist/
+  protocol.handle('app', (request) => {
+    const url = new URL(request.url);
+    const filePath = path.join(__dirname, '..', 'dist', url.pathname);
+    return net.fetch(`file://${filePath}`);
+  });
+
+  // Initialise Tor transport stack
+  const tor = initTor(ipcMain);
+  torControl = tor.torControl;
+
+  // Broadcast Tor status changes to all renderer windows
+  // and toggle the session-level SOCKS proxy so all renderer
+  // network requests (fetch, XHR, WebSocket) go through Tor.
+  torControl.onAny(async (status) => {
+    const data = { status, info: torControl.state.info };
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("tor:status-changed", data);
+    }
+
+    if (status === 'started') {
+      await session.defaultSession.setProxy({
+        proxyRules: 'socks5://127.0.0.1:9250',
+      });
+      console.log('Session proxy set to Tor SOCKS5');
+    } else if (status === 'stopped' || status === 'failed') {
+      await session.defaultSession.setProxy({ mode: 'direct' });
+      console.log('Session proxy set to direct');
+    }
+  });
+
+  // Handle renderer requests to change Tor mode
+  ipcMain.handle("tor:set-mode", async (_event, mode) => {
+    const newSettings = { ...torControl.settings, enabled3: mode };
+    await torControl.settingChanged(newSettings);
+    return { status: torControl.state.status, info: torControl.state.info, mode };
+  });
+
+  // Let renderer query current Tor status (avoids race on startup)
+  ipcMain.handle("tor:get-status", () => ({
+    status: torControl.state.status,
+    info: torControl.state.info,
+    mode: torControl.settings.enabled3,
+  }));
+
   createWindow();
 
   app.on("activate", () => {
     // macOS: re-create window when dock icon is clicked
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("before-quit", () => {
+  if (torControl) torControl.stop();
 });
 
 app.on("window-all-closed", () => {

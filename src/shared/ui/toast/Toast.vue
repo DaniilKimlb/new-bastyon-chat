@@ -37,13 +37,18 @@ watch(() => props.show, (val) => {
 </template>
 
 <style scoped>
-.toast-slide-enter-active,
-.toast-slide-leave-active {
-  transition: all 0.3s;
+.toast-slide-enter-active {
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.toast-slide-enter-from,
+.toast-slide-leave-active {
+  transition: all 0.2s ease-in;
+}
+.toast-slide-enter-from {
+  opacity: 0;
+  transform: translate(-50%, 20px) scale(0.9);
+}
 .toast-slide-leave-to {
   opacity: 0;
-  transform: translate(-50%, 20px);
+  transform: translate(-50%, 20px) scale(0.9);
 }
 </style>

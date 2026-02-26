@@ -229,6 +229,13 @@ export class MatrixClientService {
         return;
       }
 
+      // Pass state events (membership, room name, power levels) from anyone
+      const stateTypes = ["m.room.member", "m.room.name", "m.room.power_levels"];
+      if (stateTypes.includes(msg.event.type)) {
+        this.onTimeline?.(message, msg.event.room_id);
+        return;
+      }
+
       if (msg.getSender() !== userId) {
         this.onTimeline?.(message, msg.event.room_id);
       }

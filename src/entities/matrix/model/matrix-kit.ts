@@ -18,43 +18,55 @@ export class MatrixKit {
   }
 
   /** Check if room is a 1:1 (tete-a-tete) chat.
-   *  Filters to active (join/invite) members to avoid false negatives
-   *  after rejoin when "leave" members inflate the count.
-   *  Falls back to room name/alias pattern matching for incomplete state. */
+   *  Matches original bastyon-chat mtrxkit.js tetatetchat() behavior exactly:
+   *  - Uses ALL members (including "leave"/"ban") for the 2-member check
+   *  - Caches result on room.tetatet once sufficient member data exists
+   *  - Returns cached value on subsequent calls for crypto stability */
   isTetatetChat(room: Record<string, unknown>): boolean {
+    // Cache check — MUST match original: once computed, return cached value.
+    // Crypto depends on stable tetatet detection (affects key derivation block param).
+    if (typeof room.tetatet !== "undefined") return room.tetatet as boolean;
+
+    // Use ALL members (not just active) — matches original bastyon-chat behavior.
+    // The original mtrxkit.js tetatetchat() uses chatUsersInfo() which includes
+    // all membership states (join, invite, leave, ban).
     const members = this.getRoomMembers(room);
-    // Filter to active members (join/invite) — "leave"/"ban" members must not affect the check
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const activeMembers = members.filter((m: any) => {
-      const ms = m.membership as string;
-      return ms === "join" || ms === "invite";
-    });
 
     const roomName = (room.name as string) ?? "";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const canonicalAlias = ((room as any).getCanonicalAlias?.() as string) ?? "";
 
-    if (activeMembers.length === 2) {
-      const users = activeMembers.map((m) => ({ id: getmatrixid(m.userId as string) }));
+    let tt = false;
+
+    // Primary check: exactly 2 members AND room name/alias matches tetatetid hash
+    if (members.length === 2) {
+      const users = members.map((m) => ({ id: getmatrixid(m.userId as string) }));
       const tid = this.tetatetId(users[0], users[1]);
       if (tid) {
-        const isTetatet = roomName === "#" + tid || canonicalAlias.indexOf(tid) > -1;
-        if (isTetatet) {
-          room.tetatet = true;
-          return true;
-        }
+        tt = roomName === "#" + tid || canonicalAlias.indexOf(tid) > -1;
       }
     }
 
-    // Fallback: check room name/alias pattern — "#" + 56-char hex = SHA-224 tetatetid hash.
-    // Handles stale member state right after rejoin via M_ROOM_IN_USE.
-    if (/^#[a-f0-9]{56}$/.test(roomName) || /[a-f0-9]{56}/.test(canonicalAlias)) {
-      room.tetatet = true;
-      return true;
+    // Fallback: canonical alias contains a 56-char hex hash (tetatet room pattern)
+    if (!tt && canonicalAlias) {
+      const aliasMatch = canonicalAlias.match(/^#([a-f0-9]{56}):/);
+      if (aliasMatch) tt = true;
     }
 
-    room.tetatet = false;
-    return false;
+    // Last resort: room name is exactly "#" + 56-char hex and NOT public
+    if (!tt && roomName.length === 57 && /^#[a-f0-9]{56}$/.test(roomName)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const joinRule = (room as any).getJoinRule?.() as string;
+      if (joinRule !== "public") tt = true;
+    }
+
+    // Cache result ONLY when we have enough member data (original: users.length > 1),
+    // OR when fallback checks positively identified tetatet.
+    if (members.length > 1 || tt) {
+      room.tetatet = tt;
+    }
+
+    return tt;
   }
 
   /** Check if room can be interacted with */

@@ -6,12 +6,23 @@ import { setupAssets } from "./assets";
 import { setupChatScripts } from "./chat-scripts";
 import { setupRouter } from "./router";
 import { setupInitialTheme } from "./theme";
+import { initTransport } from "@/shared/lib/transport/init-transport";
+import { useTorStore } from "@/entities/tor";
+import { useLocaleStore } from "@/entities/locale";
 
 export const setupProviders = async (app: App) => {
   setupAssets();
   await setupChatScripts();
   app.use(createPinia());
   setupInitialTheme();
+  useLocaleStore(); // sets document.documentElement.lang from persisted locale
+
+  // Register Service Worker transport proxy in Electron
+  if (window.electronAPI?.isElectron) {
+    initTransport();
+    useTorStore().init();
+  }
+
   await setupRouter(app);
 };
 

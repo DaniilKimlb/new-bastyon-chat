@@ -1,0 +1,274 @@
+export const en = {
+  // ── Navigation / Sidebar ──
+  "nav.chats": "Chats",
+  "nav.contacts": "Contacts",
+  "nav.settings": "Settings",
+  "nav.searchUsers": "Search users",
+  "nav.newGroup": "New group",
+
+  // ── Contacts panel ──
+  "contacts.searchPlaceholder": "Search contacts...",
+  "contacts.noFound": "No contacts found",
+  "contacts.noYet": "No contacts yet",
+
+  // ── Contact list ──
+  "contactList.noConversations": "No conversations yet",
+  "contactList.inviteToChat": "Invitation to chat",
+  "contactList.noMessages": "No messages",
+  "contactList.you": "You",
+  "contactList.typing": "typing...",
+  "contactList.typingCount": "{count} typing...",
+  "contactList.pin": "Pin",
+  "contactList.unpin": "Unpin",
+  "contactList.mute": "Mute",
+  "contactList.unmute": "Unmute",
+  "contactList.markAsRead": "Mark as Read",
+  "contactList.delete": "Delete",
+  "contactList.deleteChat": "Delete chat?",
+  "contactList.deleteChatConfirm": "Do you really want to leave and delete this chat?",
+  "contactList.cancel": "Cancel",
+
+  // ── Contact search ──
+  "contactSearch.placeholder": "Search chats or users...",
+  "contactSearch.searching": "Searching...",
+  "contactSearch.openingChat": "Opening chat...",
+  "contactSearch.chats": "Chats",
+  "contactSearch.users": "Users",
+  "contactSearch.noResults": "No chats or users found",
+
+  // ── Folder tabs ──
+  "tabs.all": "All",
+  "tabs.personal": "Personal",
+  "tabs.groups": "Groups",
+  "tabs.invites": "Invites",
+
+  // ── Settings panel ──
+  "settings.title": "Settings",
+  "settings.myProfile": "My Profile",
+  "settings.appearance": "Appearance",
+  "settings.darkMode": "Dark Mode",
+  "settings.torProxy": "Tor Proxy",
+  "settings.torFailed": "Tor failed to start. Try toggling off and on again.",
+  "settings.logout": "Logout",
+  "settings.anonymous": "Anonymous",
+  "settings.notifications": "Notifications",
+  "settings.enabled": "Enabled",
+  "settings.privacy": "Privacy",
+
+  // ── Settings content / Appearance ──
+  "settings.editProfile": "Edit Profile",
+  "appearance.theme": "Theme",
+  "appearance.light": "Light",
+  "appearance.dark": "Dark",
+  "appearance.accentColor": "Accent Color",
+  "appearance.custom": "Custom",
+  "appearance.apply": "Apply",
+  "appearance.cancel": "Cancel",
+  "appearance.chatBackground": "Chat Background",
+  "appearance.chatBackgroundDesc": "Customize the chat area background",
+  "appearance.fontSize": "Font Size",
+  "appearance.fontSizePreview": "Preview text at current size",
+  "appearance.messageDensity": "Message Density",
+  "appearance.messageDensityDesc": "Control spacing between messages",
+  "appearance.compact": "Compact",
+  "appearance.default": "Default",
+  "appearance.comfortable": "Comfortable",
+  "appearance.bubbleCorners": "Bubble Corners",
+  "appearance.sharp": "Sharp",
+  "appearance.round": "Round",
+  "appearance.chatOptions": "Chat Options",
+  "appearance.showAvatars": "Show avatars in chats",
+  "appearance.showTimestamps": "Show timestamps",
+  "appearance.groupMessages": "Group consecutive messages",
+  "appearance.enableAnimations": "Enable animations",
+  "appearance.quickReactions": "Quick Reactions",
+  "appearance.quickReactionsDesc": "Customize the emoji shortcuts shown in the context menu",
+  "appearance.edit": "Edit",
+  "appearance.reset": "Reset",
+  "appearance.done": "Done",
+  "appearance.tapToReplace": "Tap an emoji to replace it",
+  "appearance.resetToDefaults": "Reset to Defaults",
+  "appearance.resetAppearance": "Reset Appearance?",
+  "appearance.resetConfirm": "This will reset all appearance settings to their default values.",
+
+  // ── Chat window ──
+  "chat.selectToStart": "Select a chat to start messaging",
+  "chat.offline": "You are offline. Messages will be sent when connection is restored.",
+  "chat.slowConnection": "Slow connection detected",
+  "chat.invitation": "Chat invitation",
+  "chat.inviteGroup": "You're invited to join {name}",
+  "chat.invitePersonal": "{name} wants to chat with you",
+  "chat.decline": "Decline",
+  "chat.accept": "Accept",
+  "chat.search": "Search",
+  "chat.videoCall": "Video call",
+  "chat.more": "More",
+  "chat.typing": "typing...",
+  "chat.typingCount": "{count} typing...",
+  "chat.members": "{count} members",
+  "chat.copiedToClipboard": "Copied to clipboard",
+
+  // ── Title bar ──
+  "titleBar.appName": "Bastyon Chat",
+  "titleBar.minimize": "Minimize",
+  "titleBar.maximize": "Maximize",
+  "titleBar.close": "Close",
+
+  // ── User edit form ──
+  "profile.name": "Name",
+  "profile.displayName": "Your display name",
+  "profile.bio": "Bio",
+  "profile.bioPlaceholder": "Tell about yourself",
+  "profile.website": "Website",
+  "profile.language": "Language",
+  "profile.address": "Address",
+  "profile.saveChanges": "Save Changes",
+  "profile.saved": "Saved",
+  "profile.saving": "Saving...",
+
+  // ── Message input ──
+  "message.editing": "Editing",
+  "message.placeholder": "Message",
+  "message.emoji": "Emoji",
+  "message.attach": "Attach",
+  "message.photo": "Photo",
+  "message.video": "Video",
+  "message.voiceMessage": "Voice message",
+  "message.file": "File",
+
+  // ── Message context menu ──
+  "contextMenu.reply": "Reply",
+  "contextMenu.copy": "Copy",
+  "contextMenu.forward": "Forward",
+  "contextMenu.edit": "Edit",
+  "contextMenu.select": "Select",
+  "contextMenu.pin": "Pin",
+  "contextMenu.delete": "Delete",
+  "contextMenu.moreReactions": "More reactions",
+
+  // ── Message list ──
+  "messageList.noMessages": "No messages yet. Start a conversation!",
+  "messageList.isTyping": "{name} is typing",
+  "messageList.peopleTyping": "{count} people are typing",
+  "messageList.deleteMessage": "Delete message?",
+  "messageList.deleteForEveryone": "Delete for everyone",
+  "messageList.deleteForMe": "Delete for me",
+  "messageList.cancel": "Cancel",
+
+  // ── Attachment panel ──
+  "attachment.photoOrVideo": "Photo or Video",
+  "attachment.file": "File",
+
+  // ── Voice recorder ──
+  "voice.slideToCancel": "< Slide to cancel",
+  "voice.cancel": "Cancel",
+  "voice.stopAndPreview": "Stop and preview",
+  "voice.send": "Send",
+  "voice.discard": "Discard",
+  "voice.voiceMessage": "Voice message",
+
+  // ── Chat search ──
+  "chatSearch.placeholder": "Search in chat...",
+  "chatSearch.noResults": "No results",
+  "chatSearch.counter": "{current} of {total}",
+
+  // ── Emoji picker ──
+  "emoji.searchPlaceholder": "Search emoji...",
+  "emoji.recent": "Recent",
+
+  // ── Forward picker ──
+  "forward.title": "Forward to...",
+  "forward.selected": "{count} selected",
+  "forward.searchPlaceholder": "Search chats...",
+  "forward.noChats": "No chats found",
+  "forward.includeSender": "Include sender info",
+  "forward.sending": "Sending...",
+  "forward.button": "Forward ({count})",
+  "forward.success": "Forwarded {msgCount} message(s) to {roomCount} chat(s)",
+  "forward.failed": "Failed to forward",
+
+  // ── Pinned bar ──
+  "pinned.message": "Pinned Message",
+  "pinned.next": "Next pinned",
+  "pinned.unpin": "Unpin",
+
+  // ── Media preview ──
+  "media.addCaption": "Add a caption...",
+  "media.captionBelow": "Caption below",
+  "media.captionAbove": "Caption above",
+
+  // ── Selection bar ──
+  "selection.selected": "{count} selected",
+  "selection.forward": "Forward",
+  "selection.copy": "Copy",
+  "selection.delete": "Delete",
+
+  // ── Group creation ──
+  "group.newGroup": "New Group",
+  "group.next": "Next",
+  "group.searchUsers": "Search users...",
+  "group.noUsersFound": "No users found",
+  "group.searchToAdd": "Search for users to add to the group",
+  "group.groupName": "Group name",
+  "group.creating": "Creating...",
+  "group.create": "Create",
+  "group.memberCount": "{count} member(s)",
+
+  // ── Chat info panel ──
+  "info.title": "Info",
+  "info.directMessage": "Direct message",
+  "info.members": "{count} members",
+  "info.notifications": "Notifications",
+  "info.shared": "Shared",
+  "info.media": "{count} media",
+  "info.files": "{count} files",
+  "info.membersHeader": "Members ({count})",
+  "info.add": "Add",
+  "info.searchToAdd": "Search users to add...",
+  "info.noUsersFound": "No users found",
+  "info.admin": "admin",
+  "info.adminLabel": "Admin",
+  "info.leaveGroup": "Leave group",
+  "info.deleteChat": "Delete chat",
+  "info.deleteGroupForAll": "Delete group for everyone",
+  "info.deleteGroupConfirm": "This will kick all members and delete the group. Are you sure?",
+  "info.leaveGroupConfirm": "Do you really want to leave this group?",
+  "info.deleteChatConfirm": "Do you really want to delete this chat?",
+  "info.cancel": "Cancel",
+  "info.delete": "Delete",
+  "info.leave": "Leave",
+  "info.removeAdmin": "Remove admin",
+  "info.makeAdmin": "Make admin",
+  "info.removeFromGroup": "Remove from group",
+
+  // ── Video calls ──
+  "call.incoming": "Incoming Call",
+
+  // ── Auth / Login ──
+  "auth.signIn": "Sign In",
+  "auth.enterKey": "Enter your Bastyon private key or mnemonic phrase",
+  "auth.signingIn": "Signing in...",
+  "auth.keyNeverLeaves": "Your private key never leaves your device",
+  "auth.enterKeyError": "Please enter a private key or mnemonic",
+  "auth.privateKeyLabel": "Private Key or Mnemonic",
+  "auth.privateKeyPlaceholder": "Enter your private key (WIF/hex) or mnemonic phrase...",
+  "auth.show": "Show",
+  "auth.hide": "Hide",
+
+  // ── Welcome ──
+  "welcome.title": "Bastyon Chat",
+  "welcome.description": "Decentralized messaging with video calls. Private, secure, and censorship-resistant.",
+  "welcome.getStarted": "Get Started",
+
+  // ── Tor status ──
+  "tor.connected": "Connected",
+  "tor.connecting": "Connecting...",
+  "tor.error": "Error",
+  "tor.off": "Off",
+
+  // ── Language names ──
+  "locale.en": "English",
+  "locale.ru": "Русский",
+} as const;
+
+export type TranslationKey = keyof typeof en;

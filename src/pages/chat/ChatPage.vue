@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import ChatSidebar from "@/widgets/sidebar/ChatSidebar.vue";
 import ChatWindow from "@/widgets/chat-window/ChatWindow.vue";
+import SettingsContentPanel from "@/widgets/sidebar/ui/SettingsContentPanel.vue";
 import { GroupCreationPanel } from "@/features/group-creation";
 import { useChatStore } from "@/entities/chat";
+import { useSidebarTab } from "@/widgets/sidebar/model/use-sidebar-tab";
 
 const chatStore = useChatStore();
+const { settingsSubView, closeSettingsContent, setTab } = useSidebarTab();
 
 const showSidebar = ref(true);
 const isMobile = ref(false);
@@ -28,6 +31,9 @@ onUnmounted(() => {
 });
 
 const onSelectRoom = () => {
+  // Close settings/profile panels so ChatWindow is visible
+  closeSettingsContent();
+  setTab("chats");
   if (isMobile.value) {
     showSidebar.value = false;
   }
@@ -55,7 +61,7 @@ const onCloseGroupCreation = () => {
 </script>
 
 <template>
-  <div class="flex h-screen bg-background-total-theme" :class="{ 'relative overflow-hidden': isMobile }">
+  <div class="flex h-full bg-background-total-theme" :class="{ 'relative overflow-hidden': isMobile }">
     <!-- Desktop: show both side by side -->
     <template v-if="!isMobile">
       <ChatSidebar
@@ -69,6 +75,10 @@ const onCloseGroupCreation = () => {
         @created="onGroupCreated"
         @close="onCloseGroupCreation"
       />
+      <SettingsContentPanel
+        v-else-if="settingsSubView"
+        class="h-full flex-1"
+      />
       <ChatWindow
         v-else
         class="h-full flex-1"
@@ -76,25 +86,76 @@ const onCloseGroupCreation = () => {
       />
     </template>
 
-    <!-- Mobile: v-show preserves state (scroll position etc.) -->
+    <!-- Mobile: slide transitions between sidebar and chat -->
     <template v-else>
-      <ChatSidebar
-        v-show="showSidebar && !showGroupCreation"
-        class="absolute inset-0 z-10 h-full w-full"
-        @select-room="onSelectRoom"
-        @new-group="onNewGroup"
-      />
-      <ChatWindow
-        v-show="!showSidebar && !showGroupCreation"
-        class="absolute inset-0 z-10 h-full w-full"
-        @back="onBackToSidebar"
-      />
-      <GroupCreationPanel
-        v-if="showGroupCreation"
-        class="absolute inset-0 z-20 h-full w-full"
-        @created="onGroupCreated"
-        @close="onCloseGroupCreation"
-      />
+      <transition name="slide-left">
+        <ChatSidebar
+          v-show="showSidebar && !showGroupCreation && !settingsSubView"
+          class="absolute inset-0 z-10 h-full w-full"
+          @select-room="onSelectRoom"
+          @new-group="onNewGroup"
+        />
+      </transition>
+      <transition name="slide-right">
+        <ChatWindow
+          v-show="!showSidebar && !showGroupCreation && !settingsSubView"
+          class="absolute inset-0 z-10 h-full w-full"
+          @back="onBackToSidebar"
+        />
+      </transition>
+      <transition name="slide-right">
+        <SettingsContentPanel
+          v-if="settingsSubView"
+          class="absolute inset-0 z-[15] h-full w-full"
+        />
+      </transition>
+      <transition name="slide-right">
+        <GroupCreationPanel
+          v-if="showGroupCreation"
+          class="absolute inset-0 z-20 h-full w-full"
+          @created="onGroupCreated"
+          @close="onCloseGroupCreation"
+        />
+      </transition>
     </template>
   </div>
 </template>
+
+<style scoped>
+/* Sidebar slides out to left when hiding */
+.slide-left-leave-active {
+  transition: transform 0.25s ease-in;
+}
+.slide-left-leave-to {
+  transform: translateX(-30%);
+}
+.slide-left-enter-active {
+  transition: transform 0.25s ease-out;
+}
+.slide-left-enter-from {
+  transform: translateX(-30%);
+}
+
+/* Chat window / group creation slides in from right */
+.slide-right-enter-active {
+  transition: transform 0.25s ease-out;
+}
+.slide-right-enter-from {
+  transform: translateX(100%);
+}
+.slide-right-leave-active {
+  transition: transform 0.25s ease-in;
+}
+.slide-right-leave-to {
+  transform: translateX(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-left-enter-active,
+  .slide-left-leave-active,
+  .slide-right-enter-active,
+  .slide-right-leave-active {
+    transition: none;
+  }
+}
+</style>

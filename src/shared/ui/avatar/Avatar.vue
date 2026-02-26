@@ -2,7 +2,7 @@
 interface Props {
   src?: string;
   name?: string;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -48,7 +48,8 @@ const initials = computed(() => {
 const sizeClass = computed(() => ({
   sm: "h-8 w-8 text-xs",
   md: "h-10 w-10 text-sm",
-  lg: "h-14 w-14 text-base"
+  lg: "h-14 w-14 text-base",
+  xl: "h-20 w-20 text-lg"
 }[props.size]));
 
 const imgError = ref(false);
