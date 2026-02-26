@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ContactList, ContactSearch, FolderTabs } from "@/features/contacts";
 import { useChatStore } from "@/entities/chat";
+import { useAuthStore } from "@/entities/auth";
 import { RoomListSkeleton } from "@/shared/ui/skeleton";
 import BottomTabBar from "./ui/BottomTabBar.vue";
 import ContactsPanel from "./ui/ContactsPanel.vue";
@@ -10,6 +11,7 @@ import type { SidebarTab } from "./model/use-sidebar-tab";
 
 const emit = defineEmits<{ selectRoom: []; newGroup: [] }>();
 const chatStore = useChatStore();
+const authStore = useAuthStore();
 
 onMounted(() => {
   chatStore.loadCachedRooms();
@@ -38,20 +40,21 @@ watch(activeTab, (newVal, oldVal) => {
 
 const roomsLoading = ref(true);
 
-// Hide skeleton once rooms appear or after 3s max
+// Hide skeleton once rooms appear OR matrixReady fires (sync complete)
 let stopWatch: ReturnType<typeof watch> | undefined;
 const cancelLoading = () => {
   roomsLoading.value = false;
   stopWatch?.();
 };
 stopWatch = watch(
-  () => chatStore.sortedRooms.length,
-  (len) => {
-    if (len > 0) cancelLoading();
+  [() => chatStore.sortedRooms.length, () => authStore.matrixReady],
+  ([len, ready]) => {
+    if (len > 0 || ready) cancelLoading();
   },
   { immediate: true },
 );
-setTimeout(cancelLoading, 3000);
+// Safety fallback: 15s max (in case matrixReady never fires due to error)
+setTimeout(cancelLoading, 15000);
 
 // Auto-switch away from "invites" tab when no invites remain
 watch(

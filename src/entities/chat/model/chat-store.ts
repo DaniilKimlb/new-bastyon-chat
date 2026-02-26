@@ -329,6 +329,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     pcryptoRef.value = crypto;
   };
 
+  /** Find the last user-facing message (not system) for preview, falling back to last message */
+  const findPreviewMessage = (msgs: Message[]): Message | undefined => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].type !== MessageType.system) return msgs[i];
+    }
+    return msgs[msgs.length - 1]; // fallback: show system msg if all are system
+  };
+
   /** Internal: actual refresh logic (called by debounced wrapper) */
   const refreshRoomsImmediate = () => {
     const matrixService = getMatrixClientService();
@@ -389,8 +397,11 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         // Use loaded messages as preview (avoids "[encrypted]" for our own optimistic messages)
         const loadedMsgs = messages.value[chatRoom.id];
         if (loadedMsgs?.length) {
-          chatRoom.lastMessage = loadedMsgs[loadedMsgs.length - 1];
-          chatRoom.updatedAt = Math.max(chatRoom.updatedAt, chatRoom.lastMessage.timestamp);
+          const preview = findPreviewMessage(loadedMsgs);
+          if (preview) {
+            chatRoom.lastMessage = preview;
+            chatRoom.updatedAt = Math.max(chatRoom.updatedAt, preview.timestamp);
+          }
         }
 
         // Apply cached decrypted previews (survives across rebuilds)
@@ -941,6 +952,30 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       return buildSystemMessage(raw, roomId);
     }
 
+    // Handle call hangup events as system messages in timeline history
+    if (raw.type === "m.call.hangup") {
+      const callContent = raw.content as Record<string, unknown>;
+      const reason = callContent.reason as string | undefined;
+      const isVideo = (callContent as any).offer_type === "video"
+        || (callContent as any).version === 1;
+      const sender = matrixIdToAddress(raw.sender as string);
+      let text: string;
+      if (reason === "invite_timeout") {
+        text = isVideo ? `Missed video call` : `Missed voice call`;
+      } else {
+        text = isVideo ? `Video call` : `Voice call`;
+      }
+      return {
+        id: raw.event_id as string,
+        roomId,
+        senderId: sender,
+        content: text,
+        timestamp: (raw.origin_server_ts as number) ?? 0,
+        status: MessageStatus.sent,
+        type: MessageType.system,
+      };
+    }
+
     if (raw.type !== "m.room.message") return null;
 
     const content = raw.content as Record<string, unknown>;
@@ -1222,7 +1257,15 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         console.warn("[chat-store] scrollback failed:", e);
       }
 
-      const timelineEvents = getTimelineEvents(matrixRoom);
+      let timelineEvents = getTimelineEvents(matrixRoom);
+
+      // Retry once if timeline is empty — sync may not have populated it yet
+      if (timelineEvents.length === 0) {
+        await new Promise(r => setTimeout(r, 1500));
+        try { await matrixService.scrollback(roomId, 25); } catch { /* ignore */ }
+        timelineEvents = getTimelineEvents(matrixRoom);
+      }
+
       const msgs = await parseTimelineEvents(timelineEvents, roomId);
 
       // Apply existing read receipts to determine message status.
@@ -1419,6 +1462,34 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         if (sysMsg) {
           addMessage(roomId, sysMsg);
         }
+        return;
+      }
+
+      // Handle call hangup events as system messages in the timeline
+      if (raw.type === "m.call.hangup") {
+        const callContent = raw.content as Record<string, unknown>;
+        const reason = callContent.reason as string | undefined;
+        const isVideo = (callContent as any).offer_type === "video"
+          || (callContent as any).version === 1;
+        // Determine if call was answered (has duration) or missed
+        const sender = matrixIdToAddress(raw.sender as string);
+        const senderName = getDisplayName(sender) || sender.slice(0, 8) + "...";
+        let text: string;
+        if (reason === "invite_timeout") {
+          text = isVideo ? `Missed video call` : `Missed voice call`;
+        } else {
+          text = isVideo ? `Video call` : `Voice call`;
+        }
+        const sysMsg: Message = {
+          id: raw.event_id as string,
+          roomId,
+          senderId: sender,
+          content: text,
+          timestamp: (raw.origin_server_ts as number) ?? 0,
+          status: MessageStatus.sent,
+          type: MessageType.system,
+        };
+        addMessage(roomId, sysMsg);
         return;
       }
 

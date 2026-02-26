@@ -197,6 +197,11 @@ const scrollToBottom = (smooth = false) => {
 // --- Message entrance animation ---
 const recentMessageIds = ref(new Set<string>());
 
+// --- Floating date header (declared early so watches below can reference it) ---
+const currentDateLabel = ref("");
+const showDateHeader = ref(false);
+let dateHideTimer: ReturnType<typeof setTimeout> | undefined;
+
 // Load messages when active room changes
 watch(
   () => chatStore.activeRoomId,
@@ -212,7 +217,8 @@ watch(
       recentMessageIds.value.clear();
       isNearBottom.value = true;
 
-      // Check if we already have messages in memory (e.g. previously visited room)
+      // Load cached messages as instant preview before live load
+      await chatStore.loadCachedMessages(roomId);
       const hadInMemory = (chatStore.activeMessages.length ?? 0) > 0;
       if (!hadInMemory) loading.value = true;
 
@@ -269,11 +275,6 @@ const getMsgEnterClass = (message: import("@/entities/chat").Message): string =>
   if (!recentMessageIds.value.has(message.id)) return "";
   return message.senderId === authStore.address ? "msg-enter-own" : "msg-enter-other";
 };
-
-// --- Floating date header ---
-const currentDateLabel = ref("");
-const showDateHeader = ref(false);
-let dateHideTimer: ReturnType<typeof setTimeout> | undefined;
 
 const updateFloatingDate = () => {
   // Use first visible virtual item to determine date
