@@ -158,9 +158,12 @@ const virtualItems = computed<VirtualItem[]>(() => {
   return items;
 });
 
-/** Get the actual scroll container (DynamicScroller's internal element or outer wrapper fallback) */
+/** Get the actual scroll container.
+ *  DynamicScroller's $el IS the scrollable element (it has overflow-y: auto). */
 const getScrollContainer = (): HTMLElement | null => {
-  return (scrollerRef.value?.$el as HTMLElement) ?? listRef.value ?? null;
+  const el = scrollerRef.value?.$el as HTMLElement | undefined;
+  if (el) return el;
+  return listRef.value ?? null;
 };
 
 /** Check if user is scrolled near the bottom */
@@ -316,17 +319,33 @@ const onScroll = () => {
 
 let scrollListenEl: HTMLElement | null = null;
 
-onMounted(() => {
-  scrollToBottom();
-  // Attach scroll listener to actual scroll container after next tick (scroller needs to render)
+const attachScrollListener = () => {
+  // Detach from old element if any
+  if (scrollListenEl) {
+    scrollListenEl.removeEventListener("scroll", onScroll);
+    scrollListenEl = null;
+  }
   nextTick(() => {
     scrollListenEl = getScrollContainer();
     scrollListenEl?.addEventListener("scroll", onScroll, { passive: true });
   });
+};
+
+onMounted(() => {
+  scrollToBottom();
+  attachScrollListener();
 });
 
+// Re-attach scroll listener when scroller appears/changes (e.g. room switch from empty → messages)
+watch(
+  () => scrollerRef.value,
+  () => attachScrollListener(),
+);
+
 onUnmounted(() => {
-  scrollListenEl?.removeEventListener("scroll", onScroll);
+  if (scrollListenEl) {
+    scrollListenEl.removeEventListener("scroll", onScroll);
+  }
   clearTimeout(dateHideTimer);
 });
 
@@ -385,7 +404,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
 </script>
 
 <template>
-  <div ref="listRef" class="relative flex-1 overflow-y-auto" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
+  <div ref="listRef" class="relative flex-1 overflow-hidden" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
     <!-- Floating date header (single, non-stacking) -->
     <div
       v-if="currentDateLabel && !loading"
