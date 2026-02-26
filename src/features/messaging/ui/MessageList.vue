@@ -411,7 +411,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
     <!-- Floating date header (single, non-stacking) -->
     <div
       v-if="currentDateLabel && !loading"
-      class="pointer-events-none sticky top-0 z-20 flex justify-center transition-opacity duration-150"
+      class="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center pt-2 transition-opacity duration-150"
       :class="showDateHeader ? 'opacity-100' : 'opacity-0'"
     >
       <span class="rounded-full bg-neutral-grad-0/80 px-3 py-1 text-xs text-text-on-main-bg-color backdrop-blur-sm">
@@ -440,7 +440,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
       :items="virtualItems"
       :min-item-size="48"
       key-field="id"
-      class="h-full px-4 py-3"
+      class="absolute inset-0 px-4 py-3"
     >
       <template #default="{ item, index, active }">
         <DynamicScrollerItem
