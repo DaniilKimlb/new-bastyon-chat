@@ -274,6 +274,16 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
             chatStore.setTypingUsers(roomId, current.filter((u) => u !== userId));
           }
         },
+        onIncomingCall: (call: unknown) => {
+          import("@/features/video-calls/model/call-service").then(({ useCallService }) => {
+            const callService = useCallService();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            callService.handleIncomingCall(call as any);
+          }).catch((err) => {
+            console.error("[auth] Failed to load call-service:", err);
+            try { (call as any).reject?.(); } catch { /* ignore */ }
+          });
+        },
       });
       console.log("[auth] Step 7: events wired");
 
@@ -286,6 +296,14 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
         console.log("[auth] Matrix client ready!");
         matrixReady.value = true;
         matrixError.value = null;
+
+        // Init cross-tab call lock
+        import("@/features/video-calls/model/call-tab-lock").then(({ initCallTabLock }) => {
+          initCallTabLock();
+          console.log("[auth] Call tab lock initialized");
+        }).catch((err) => {
+          console.warn("[auth] Failed to init call tab lock:", err);
+        });
 
         // Explicitly load rooms immediately — the onSync callback may have
         // already fired before handlers were wired.
@@ -345,6 +363,11 @@ export const useAuthStore = defineStore(NAMESPACE, () => {
   );
 
   const logout = () => {
+    // Destroy cross-tab call lock
+    import("@/features/video-calls/model/call-tab-lock").then(({ destroyCallTabLock }) => {
+      destroyCallTabLock();
+    }).catch(() => { /* ignore */ });
+
     // Tear down Matrix
     resetMatrixClientService();
     matrixReady.value = false;
