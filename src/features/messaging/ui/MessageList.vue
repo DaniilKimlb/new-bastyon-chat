@@ -407,7 +407,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
 </script>
 
 <template>
-  <div ref="listRef" class="relative flex-1 overflow-hidden" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
+  <div ref="listRef" class="relative min-h-0 flex-1 overflow-hidden" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
     <!-- Floating date header (single, non-stacking) -->
     <div
       v-if="currentDateLabel && !loading"
