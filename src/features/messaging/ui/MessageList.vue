@@ -225,6 +225,9 @@ watch(
 watch(
   () => chatStore.activeMessages.length,
   (newLen, oldLen) => {
+    // Skip if this is a pagination load (older messages prepended)
+    if (loadingMore.value) return;
+
     if (isNearBottom.value) {
       scrollToBottom();
     } else if (oldLen !== undefined && newLen > oldLen) {
@@ -450,10 +453,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
             item.message?.reactions ? Object.keys(item.message.reactions).length : 0,
           ]"
         >
-          <!-- Load-more spinner at top -->
-          <div v-if="index === 0 && loadingMore" class="flex justify-center py-2">
-            <div class="h-5 w-5 animate-spin rounded-full border-2 border-color-bg-ac border-t-transparent" />
-          </div>
+          <!-- Pagination happens silently (Telegram-style, no spinner) -->
 
           <!-- Date separator (use padding instead of margin — DynamicScroller ignores margins) -->
           <div
