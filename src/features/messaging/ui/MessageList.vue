@@ -407,7 +407,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
 </script>
 
 <template>
-  <div ref="listRef" class="relative min-h-0 flex-1 overflow-hidden" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
+  <div ref="listRef" class="relative min-h-0 flex-1" :style="themeStore.chatWallpaper ? { background: themeStore.chatWallpaper } : {}">
     <!-- Floating date header (single, non-stacking) -->
     <div
       v-if="currentDateLabel && !loading"
@@ -440,7 +440,7 @@ defineExpose({ scrollToMessage, setSearchQuery });
       :items="virtualItems"
       :min-item-size="48"
       key-field="id"
-      class="absolute inset-0 px-4 py-3"
+      class="h-full overflow-y-auto px-4 py-3"
     >
       <template #default="{ item, index, active }">
         <DynamicScrollerItem
