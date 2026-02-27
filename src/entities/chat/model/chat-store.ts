@@ -349,8 +349,9 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matrixRooms = matrixService.getRooms() as any[];
 
-    // Preserve existing room data — addRoom may have set good names that Matrix can't resolve yet
+    // Preserve existing room data — addRoom/addMessage/cache may have set data that Matrix can't resolve yet
     const prevNameMap = new Map(rooms.value.map(r => [r.id, r.name]));
+    const prevLastMessageMap = new Map(rooms.value.map(r => [r.id, r.lastMessage]));
     const prevActiveRoom = activeRoomId.value
       ? rooms.value.find(r => r.id === activeRoomId.value)
       : undefined;
@@ -401,6 +402,19 @@ export const useChatStore = defineStore(NAMESPACE, () => {
           if (preview) {
             chatRoom.lastMessage = preview;
             chatRoom.updatedAt = Math.max(chatRoom.updatedAt, preview.timestamp);
+          }
+        }
+
+        // Preserve previous lastMessage if the new one is missing/encrypted/older.
+        // addMessage or cache may have set a good preview that matrixRoomToChatRoom can't reproduce.
+        const prevLast = prevLastMessageMap.get(chatRoom.id);
+        if (prevLast) {
+          if (!chatRoom.lastMessage || chatRoom.lastMessage.content === "[encrypted]") {
+            chatRoom.lastMessage = prevLast;
+            chatRoom.updatedAt = Math.max(chatRoom.updatedAt, prevLast.timestamp);
+          } else if (prevLast.timestamp > chatRoom.lastMessage.timestamp) {
+            chatRoom.lastMessage = prevLast;
+            chatRoom.updatedAt = Math.max(chatRoom.updatedAt, prevLast.timestamp);
           }
         }
 
