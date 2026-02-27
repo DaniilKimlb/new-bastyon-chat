@@ -369,13 +369,6 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     pcryptoRef.value = crypto;
   };
 
-  /** Find the last user-facing message (not system) for preview, falling back to last message */
-  const findPreviewMessage = (msgs: Message[]): Message | undefined => {
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].type !== MessageType.system) return msgs[i];
-    }
-    return msgs[msgs.length - 1]; // fallback: show system msg if all are system
-  };
 
   /** Internal: actual refresh logic (called by debounced wrapper) */
   const refreshRoomsImmediate = () => {
@@ -438,11 +431,8 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         // Use loaded messages as preview (avoids "[encrypted]" for our own optimistic messages)
         const loadedMsgs = messages.value[chatRoom.id];
         if (loadedMsgs?.length) {
-          const preview = findPreviewMessage(loadedMsgs);
-          if (preview) {
-            chatRoom.lastMessage = preview;
-            chatRoom.updatedAt = Math.max(chatRoom.updatedAt, preview.timestamp);
-          }
+          chatRoom.lastMessage = loadedMsgs[loadedMsgs.length - 1];
+          chatRoom.updatedAt = Math.max(chatRoom.updatedAt, chatRoom.lastMessage.timestamp);
         }
 
         // Preserve previous lastMessage if the new one is missing/encrypted/older.
