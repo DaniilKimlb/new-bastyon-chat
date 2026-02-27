@@ -219,8 +219,17 @@ watch(
 
       // Load cached messages as instant preview before live load
       await chatStore.loadCachedMessages(roomId);
-      const hadInMemory = (chatStore.activeMessages.length ?? 0) > 0;
-      if (!hadInMemory) loading.value = true;
+      const hadCached = (chatStore.activeMessages.length ?? 0) > 0;
+
+      if (hadCached) {
+        // Show cached messages immediately while live load runs in background
+        scrollToBottom();
+        await nextTick();
+        settled.value = true;
+        switching.value = false;
+      } else {
+        loading.value = true;
+      }
 
       try {
         await loadMessages(roomId);
@@ -231,7 +240,6 @@ watch(
       // Scroll to bottom, then reveal once the DOM has painted
       scrollToBottom();
       await nextTick();
-      // Extra frame to let DynamicScroller finish measuring items
       requestAnimationFrame(() => {
         settled.value = true;
         switching.value = false;
