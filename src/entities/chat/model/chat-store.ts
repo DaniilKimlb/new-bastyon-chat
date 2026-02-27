@@ -428,11 +428,17 @@ export const useChatStore = defineStore(NAMESPACE, () => {
           }
         }
 
-        // Use loaded messages as preview (avoids "[encrypted]" for our own optimistic messages)
+        // Use loaded messages as preview (avoids "[encrypted]" for our own optimistic messages),
+        // but only if the loaded message is newer than what matrixRoomToChatRoom found.
         const loadedMsgs = messages.value[chatRoom.id];
         if (loadedMsgs?.length) {
-          chatRoom.lastMessage = loadedMsgs[loadedMsgs.length - 1];
-          chatRoom.updatedAt = Math.max(chatRoom.updatedAt, chatRoom.lastMessage.timestamp);
+          const lastLoaded = loadedMsgs[loadedMsgs.length - 1];
+          if (!chatRoom.lastMessage
+              || chatRoom.lastMessage.content === "[encrypted]"
+              || lastLoaded.timestamp >= chatRoom.lastMessage.timestamp) {
+            chatRoom.lastMessage = lastLoaded;
+            chatRoom.updatedAt = Math.max(chatRoom.updatedAt, lastLoaded.timestamp);
+          }
         }
 
         // Preserve previous lastMessage if the new one is missing/encrypted/older.
