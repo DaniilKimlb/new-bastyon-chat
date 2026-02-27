@@ -110,9 +110,17 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string, nameH
       if (raw.type === "m.room.member" && raw.content) {
         const membership = (raw.content as Record<string, unknown>).membership as string;
         const sender = matrixIdToAddress(raw.sender as string);
+        const senderName = nameHints?.[sender] || sender.slice(0, 8) + "...";
+        const stateKey = raw.state_key as string | undefined;
+        const targetAddr = stateKey ? matrixIdToAddress(stateKey) : sender;
+        const targetName = targetAddr !== sender
+          ? (nameHints?.[targetAddr] || targetAddr.slice(0, 8) + "...")
+          : senderName;
+        const isSelf = targetAddr === sender;
         let text = "";
-        if (membership === "join") text = `${sender} joined`;
-        else if (membership === "leave") text = `${sender} left`;
+        if (membership === "join") text = isSelf ? `${senderName} joined the chat` : `${senderName} added ${targetName}`;
+        else if (membership === "leave") text = isSelf ? `${senderName} left the chat` : `${senderName} removed ${targetName}`;
+        else if (membership === "invite") text = `${senderName} invited ${targetName}`;
         if (text) {
           lastSystemMessage = {
             id: raw.event_id as string, roomId, senderId: sender,
@@ -123,7 +131,8 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string, nameH
       } else if (raw.type === "m.call.hangup") {
         const reason = (raw.content as Record<string, unknown>).reason as string | undefined;
         const sender = matrixIdToAddress(raw.sender as string);
-        const text = reason === "invite_timeout" ? "Missed call" : "Call ended";
+        const senderName = nameHints?.[sender] || sender.slice(0, 8) + "...";
+        const text = reason === "invite_timeout" ? `Missed call from ${senderName}` : `Call with ${senderName}`;
         lastSystemMessage = {
           id: raw.event_id as string, roomId, senderId: sender,
           content: text, timestamp: (raw.origin_server_ts as number) ?? 0,
