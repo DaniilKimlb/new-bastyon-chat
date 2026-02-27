@@ -408,7 +408,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
       return true;
     });
 
-    rooms.value = interactiveRooms
+    const newRooms = interactiveRooms
       .map((r) => {
         const chatRoom = matrixRoomToChatRoom(r, kit, myUserId, userDisplayNames.value);
         if (chatRoom.id === activeRoomId.value) chatRoom.unreadCount = 0;
@@ -461,14 +461,14 @@ export const useChatStore = defineStore(NAMESPACE, () => {
         }
 
         return chatRoom;
-      })
-      // Show all rooms — matches original bastyon-chat behavior.
-      // The original only filters by deletedrooms (handled above in interactiveRooms filter).
-      ;
+      });
 
-    if (prevActiveRoom && !rooms.value.some(r => r.id === prevActiveRoom.id)) {
-      rooms.value.push(prevActiveRoom);
+    // Ensure active room is in the list before assigning (prevents "no chat selected" flash)
+    if (prevActiveRoom && !newRooms.some(r => r.id === prevActiveRoom.id)) {
+      newRooms.push(prevActiveRoom);
     }
+
+    rooms.value = newRooms;
 
     // Build user display name cache from room members
     for (const r of interactiveRooms) {
