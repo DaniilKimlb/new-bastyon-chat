@@ -217,19 +217,9 @@ watch(
       recentMessageIds.value.clear();
       isNearBottom.value = true;
 
-      // Load cached messages as instant preview before live load
+      // Pre-load cached messages so they're ready when skeleton hides
       await chatStore.loadCachedMessages(roomId);
-      const hadCached = (chatStore.activeMessages.length ?? 0) > 0;
-
-      if (hadCached) {
-        // Show cached messages immediately while live load runs in background
-        scrollToBottom();
-        await nextTick();
-        settled.value = true;
-        switching.value = false;
-      } else {
-        loading.value = true;
-      }
+      loading.value = true;
 
       try {
         await loadMessages(roomId);
