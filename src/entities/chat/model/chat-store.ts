@@ -60,6 +60,7 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string, nameH
 
   // Find last message event (search backwards, skip state events)
   let lastMessage: Message | undefined;
+  let lastSystemMessage: Message | undefined; // fallback: member/call events
   let lastTs = 0;
   for (let i = timelineEvents.length - 1; i >= 0; i--) {
     const raw = getRawEvent(timelineEvents[i]);
@@ -104,7 +105,37 @@ function matrixRoomToChatRoom(room: any, kit: MatrixKit, myUserId: string, nameH
         type: previewType,
       };
     }
+    // Pick up system events (member join/leave, call hangup) as fallback preview
+    if (!lastSystemMessage) {
+      if (raw.type === "m.room.member" && raw.content) {
+        const membership = (raw.content as Record<string, unknown>).membership as string;
+        const sender = matrixIdToAddress(raw.sender as string);
+        let text = "";
+        if (membership === "join") text = `${sender} joined`;
+        else if (membership === "leave") text = `${sender} left`;
+        if (text) {
+          lastSystemMessage = {
+            id: raw.event_id as string, roomId, senderId: sender,
+            content: text, timestamp: (raw.origin_server_ts as number) ?? 0,
+            status: MessageStatus.sent, type: MessageType.system,
+          };
+        }
+      } else if (raw.type === "m.call.hangup") {
+        const reason = (raw.content as Record<string, unknown>).reason as string | undefined;
+        const sender = matrixIdToAddress(raw.sender as string);
+        const text = reason === "invite_timeout" ? "Missed call" : "Call ended";
+        lastSystemMessage = {
+          id: raw.event_id as string, roomId, senderId: sender,
+          content: text, timestamp: (raw.origin_server_ts as number) ?? 0,
+          status: MessageStatus.sent, type: MessageType.system,
+        };
+      }
+    }
     if (lastMessage && lastTs) break;
+  }
+  // Use system event as fallback if no real message found
+  if (!lastMessage && lastSystemMessage) {
+    lastMessage = lastSystemMessage;
   }
 
   // Resolve display name
