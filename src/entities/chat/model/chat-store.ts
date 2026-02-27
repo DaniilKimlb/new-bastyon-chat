@@ -218,6 +218,9 @@ export const useChatStore = defineStore(NAMESPACE, () => {
   const typing = ref<Record<string, string[]>>({});
   const replyingTo = ref<ReplyTo | null>(null);
 
+  /** True after the first refreshRoomsImmediate completes (rooms list is authoritative) */
+  const roomsInitialized = ref(false);
+
   // Cache for decrypted room previews — persists across refreshRooms() rebuilds
   const decryptedPreviewCache = new Map<string, string>();
 
@@ -488,6 +491,9 @@ export const useChatStore = defineStore(NAMESPACE, () => {
 
     // Fire-and-forget: cache rooms to IndexedDB
     cacheRooms(rooms.value).catch(() => {});
+
+    // Mark rooms as initialized (first sync-based refresh complete)
+    if (!roomsInitialized.value) roomsInitialized.value = true;
   };
 
   /** Debounced refresh: batches multiple rapid calls into one (150ms window) */
@@ -1909,6 +1915,7 @@ export const useChatStore = defineStore(NAMESPACE, () => {
     refreshRoomsNow,
     removeMessage,
     removeRoom,
+    roomsInitialized,
     replyingTo,
     rooms,
     selectedMessageIds,

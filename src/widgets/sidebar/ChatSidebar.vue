@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ContactList, ContactSearch, FolderTabs } from "@/features/contacts";
 import { useChatStore } from "@/entities/chat";
-import { useAuthStore } from "@/entities/auth";
 import { RoomListSkeleton } from "@/shared/ui/skeleton";
 import BottomTabBar from "./ui/BottomTabBar.vue";
 import ContactsPanel from "./ui/ContactsPanel.vue";
@@ -11,7 +10,6 @@ import type { SidebarTab } from "./model/use-sidebar-tab";
 
 const emit = defineEmits<{ selectRoom: []; newGroup: [] }>();
 const chatStore = useChatStore();
-const authStore = useAuthStore();
 
 onMounted(() => {
   chatStore.loadCachedRooms();
@@ -40,21 +38,21 @@ watch(activeTab, (newVal, oldVal) => {
 
 const roomsLoading = ref(true);
 
-// Hide skeleton once rooms appear OR matrixReady fires (sync complete)
+// Hide skeleton once rooms appear OR first room refresh completes (even if empty)
 let stopWatch: ReturnType<typeof watch> | undefined;
 const cancelLoading = () => {
   roomsLoading.value = false;
   stopWatch?.();
 };
 stopWatch = watch(
-  [() => chatStore.sortedRooms.length, () => authStore.matrixReady],
-  ([len, ready]) => {
-    if (len > 0 || ready) cancelLoading();
+  [() => chatStore.sortedRooms.length, () => chatStore.roomsInitialized],
+  ([len, initialized]) => {
+    if (len > 0 || initialized) cancelLoading();
   },
   { immediate: true },
 );
-// Safety fallback: 15s max (in case matrixReady never fires due to error)
-setTimeout(cancelLoading, 15000);
+// Safety fallback: 30s max (initial sync in new browser can be slow)
+setTimeout(cancelLoading, 30000);
 
 // Auto-switch away from "invites" tab when no invites remain
 watch(
